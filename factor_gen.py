@@ -24,8 +24,10 @@ def prepare_inputs(code: str, factor_name: str):
     price_path = os.path.join(params['price_dir'], factor_adj[factor_name], f'{code}.csv')
     if not os.path.exists(price_path):
         raise FileNotFoundError(f"price file not found: {price_path}")
-    price_df = pd.read_csv(price_path, encoding='utf-8-sig')
-    inputs['price_df'] = price_df
+    if 'price_df' in required_params:
+        price_df = pd.read_csv(price_path, encoding='utf-8-sig')
+        price_df = standardize_price_df(price_df)
+        inputs['price_df'] = price_df
 
     # 市场指数数据
     if 'market_df' in required_params:
@@ -52,8 +54,21 @@ def prepare_inputs(code: str, factor_name: str):
         cashflow_df = standardize_cashflow_df(cashflow_df)
         inputs['cashflow_df'] = cashflow_df
 
+    # 估值表
+    if 'value_df' in required_params:
+        path = os.path.join(params['price_dir'], "value", f'{code}.csv')
+        value_df = pd.read_csv(path, encoding='utf-8-sig')
+        inputs['value_df'] = value_df
     return inputs
 
+def standardize_price_df(df) -> pd.DataFrame:
+    rename_map = {
+        '当日收盘价': '收盘',
+    }
+    for old, new in rename_map.items():
+        if old in df.columns:
+            df = df.rename(columns={old: new})
+    return df
 
 def standardize_balance_df(df):
     rename_map = {
@@ -74,7 +89,8 @@ def standardize_balance_df(df):
 
 def standardize_profit_df(df):
     rename_map = {
-        '净利润': 'net_profit',
+        '归属于母公司的净利润': 'net_profit',
+        '归属于母公司所有者的净利润' : 'net_profit',
         '营业总收入': 'total_revenue',
         '营业收入': 'revenue',
         '报告日': 'report_date',
@@ -117,7 +133,7 @@ def calc_from_list(factor_name:str, re_cal = RE_CAL_DEFAULT):
         try:
             inputs = prepare_inputs(code, factor_name)  # 统一加载所有输入
             factor_func = factor_functions[factor_name]
-            factor_df = factor_func(**inputs)
+            factor_df = factor_func(**inputs).copy()
             factor_df['code'] = code
             factor_df.rename(columns={factor_df.columns[1]: 'factor_value'}, inplace=True)  # 重命名因子列为统一字段
             all_result.append(factor_df)
@@ -253,81 +269,72 @@ def calc_beta_cov(price_df, market_df):
     return pd.DataFrame(beta_list)
 
 
-def calc_total_mv(price_df, balance_df):
+def calc_total_mv(value_df):
     """
     总市值 = 股价 × 总股本
     """
-    price_df = price_df.rename(columns={'日期': 'date', '收盘': 'close'})
-    price_df['date'] = pd.to_datetime(price_df['date'])
-    balance_df['report_date'] = pd.to_datetime(balance_df['report_date'])
-
-    # 对齐财报时间，向前填充
-    price_df = price_df.merge(balance_df[['report_date', 'total_share']], how='left',
-                              left_on='date', right_on='report_date')
-    price_df['total_share'] = price_df['total_share'].ffill()
-    price_df['total_mv'] = price_df['close'] * price_df['total_share']
-    return price_df[['date', 'total_mv']]
+    value_df = value_df.rename(columns={'数据日期': 'date'})
+    return value_df[['date', '总市值']]
 
 
-def calc_pe_inverse(price_df, profit_df, balance_df):
+def calc_pe_inverse(value_df, profit_df, price_df):
     """
     市盈率倒数 = 每股收益 / 股价，EPS = 净利润 / 总股本
     """
-    price_df = price_df.rename(columns={'日期': 'date', '收盘': 'close'})
-    price_df['date'] = pd.to_datetime(price_df['date'])
-
+    total_mv_df = calc_total_mv(value_df)
     profit_df['report_date'] = pd.to_datetime(profit_df['report_date'])
-    balance_df['report_date'] = pd.to_datetime(balance_df['report_date'])
-
-    merged = pd.merge(profit_df, balance_df, on='report_date', how='inner')
-    merged['eps'] = merged['net_profit'] / merged['total_share']
-
-    merged_price = price_df.merge(merged[['report_date', 'eps']], left_on='date', right_on='report_date', how='left')
+    total_mv_df['date'] = pd.to_datetime(total_mv_df['date'])
+    merged = pd.merge(total_mv_df, profit_df, left_on='date', right_on='report_date', how='outer')
+    merged['eps'] = merged['net_profit'] / merged['总市值']
+    price_df['日期'] = pd.to_datetime(price_df['日期'])
+    merged_price = price_df.merge(merged[['date', 'eps']], left_on='日期', right_on='date', how='left')
     merged_price['eps'] = merged_price['eps'].ffill()
-    merged_price['pe_inverse'] = merged_price['eps'] / merged_price['close']
+    merged_price['pe_inverse'] = merged_price['eps'] / merged_price['收盘']
 
     return merged_price[['date', 'pe_inverse']]
 
 
-def calc_pb(price_df, balance_df):
+def calc_pb(value_df, balance_df, price_df):
     """
-    市净率 = 市值 / 净资产 = (股价 × 股本) / (总资产 - 总负债)
+    市净率 = 总市值 / 净资产 = 总市值 / (总资产 - 总负债)
     """
-    price_df = price_df.rename(columns={'日期': 'date', '收盘': 'close'})
-    price_df['date'] = pd.to_datetime(price_df['date'])
-
+    total_mv_df = calc_total_mv(value_df)
     balance_df['report_date'] = pd.to_datetime(balance_df['report_date'])
+    total_mv_df['date'] = pd.to_datetime(total_mv_df['date'])
 
     balance_df['net_asset'] = balance_df['total_asset'] - balance_df['total_liability']
+    merged = pd.merge(total_mv_df, balance_df[['report_date', 'net_asset']], left_on='date', right_on='report_date', how='outer')
 
-    merged = price_df.merge(balance_df[['report_date', 'net_asset', 'total_share']], left_on='date', right_on='report_date', how='left')
-    merged['net_asset'] = merged['net_asset'].ffill()
-    merged['total_share'] = merged['total_share'].ffill()
-    merged['mv'] = merged['close'] * merged['total_share']
-    merged['pb'] = merged['mv'] / merged['net_asset']
+    price_df['日期'] = pd.to_datetime(price_df['日期'])
+    merged_price = price_df.merge(merged[['date', 'net_asset', '总市值']], left_on='日期', right_on='date', how='left')
 
-    return merged[['date', 'pb']]
+    merged_price['net_asset'] = merged_price['net_asset'].ffill()
+    merged_price['总市值'] = merged_price['总市值'].ffill()
+    merged_price['pb'] = merged_price['总市值'] / merged_price['net_asset']
+
+    return merged_price[['date', 'pb']]
 
 
-def calc_ps(price_df, profit_df, balance_df):
+
+def calc_ps(value_df, profit_df, price_df):
     """
-    市销率 = 市值 / 营业总收入
+    市销率 = 总市值 / 营业收入
     """
-    price_df = price_df.rename(columns={'日期': 'date', '收盘': 'close'})
-    price_df['date'] = pd.to_datetime(price_df['date'])
-
+    total_mv_df = calc_total_mv(value_df)
     profit_df['report_date'] = pd.to_datetime(profit_df['report_date'])
-    balance_df['report_date'] = pd.to_datetime(balance_df['report_date'])
+    total_mv_df['date'] = pd.to_datetime(total_mv_df['date'])
 
-    merged = pd.merge(profit_df, balance_df, on='report_date', how='inner')
+    merged = pd.merge(total_mv_df, profit_df[['report_date', 'revenue']], left_on='date', right_on='report_date', how='outer')
 
-    merged_all = price_df.merge(merged[['report_date', 'revenue', 'total_share']], left_on='date', right_on='report_date', how='left')
-    merged_all['revenue'] = merged_all['revenue'].ffill()
-    merged_all['total_share'] = merged_all['total_share'].ffill()
-    merged_all['mv'] = merged_all['close'] * merged_all['total_share']
-    merged_all['ps'] = merged_all['mv'] / merged_all['revenue']
+    price_df['日期'] = pd.to_datetime(price_df['日期'])
+    merged_price = price_df.merge(merged[['date', 'revenue', '总市值']], left_on='日期', right_on='date', how='left')
 
-    return merged_all[['date', 'ps']]
+    merged_price['revenue'] = merged_price['revenue'].ffill()
+    merged_price['总市值'] = merged_price['总市值'].ffill()
+    merged_price['ps'] = merged_price['总市值'] / merged_price['revenue']
+
+    return merged_price[['date', 'ps']]
+
 
 
 # 所有因子函数接口
@@ -361,7 +368,7 @@ if __name__ == '__main__':
     calc_from_list('beta_cov')
     calc_from_list('beta_reg')
     calc_from_list('total_mv')
-    calc_from_list('pb')
-    calc_from_list('ps')
-    calc_from_list('pe_inv')
+    calc_from_list('pb', re_cal=True)
+    calc_from_list('ps', re_cal=True)
+    # calc_from_list('pe_inv', re_cal=True)
 

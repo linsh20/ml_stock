@@ -3,6 +3,7 @@ from datetime import datetime
 params = {
     'data_dir': './data',
     'price_dir' : './data/price',
+    'result_dir' : './result',
     'financial_dir' : './data/financial',
     'factor_dir' : './factors',
     'start_date': '20180101',
