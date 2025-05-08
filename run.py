@@ -9,9 +9,15 @@ import matplotlib.pyplot as plt
 import os
 from config import params
 from sklearn.impute import SimpleImputer
+import time
+from tqdm import tqdm
+import draw
+import csv
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import FunctionTransformer
 
 
-def train_model_with_tscv(X_train, y_train, factor_cols, model_type='rf', n_splits=10):
+def train_model_with_tscv(X_train, y_train, model_type='dt', n_splits=5):
     tscv = TimeSeriesSplit(n_splits=n_splits)
 
     if model_type == 'dt':
@@ -26,14 +32,14 @@ def train_model_with_tscv(X_train, y_train, factor_cols, model_type='rf', n_spli
 
     models = []
     scores = []
+    times = []
 
-    # TimeSeries K-Fold
-    for train_index, val_index in tscv.split(X_train):
+    print(f"Training {model_type.upper()} model with {n_splits}-fold TimeSeriesSplit...\n")
+    for i, (train_index, val_index) in enumerate(tqdm(tscv.split(X_train), total=n_splits, desc="Progress")):
+        start_time = time.time()
+
         X_tr, X_val = X_train.iloc[train_index], X_train.iloc[val_index]
         y_tr, y_val = y_train.iloc[train_index], y_train.iloc[val_index]
-
-        # X_tr,  imputer = clean_nan(X_tr,  strategy='mean')
-        # X_val = pd.DataFrame(imputer.transform(X_val[factor_cols]), columns=factor_cols, index=X_val.index)
 
         model = model_class()
         model.fit(X_tr, y_tr)
@@ -44,74 +50,90 @@ def train_model_with_tscv(X_train, y_train, factor_cols, model_type='rf', n_spli
         models.append(model)
         scores.append(score)
 
-    # 返回得分最高的模型
+        elapsed_time = time.time() - start_time
+        times.append(elapsed_time)
+        print(f"Fold {i + 1}: Accuracy={score:.4f}, Time={elapsed_time:.2f} seconds")
+
     best_model = models[np.argmax(scores)]
+    print(f"\nBest accuracy: {max(scores):.4f}")
+    print(f"Average training time per fold: {np.mean(times):.2f} seconds")
+    print(f"total use time : {time.time() - start_time:.2f} seconds")
     return best_model
 
 
 def select_stocks_and_backtest(model, test_data, hold_data, factor_cols, return_col,
-                                imputer, top_k=15, test_start=None, test_end=None, hold_end=None, target_label=5):
+                     imputer, top_k=15, test_start=None, test_end=None, hold_start=None, target_label=5):
     period_str = f"[test period: {test_start} → {test_end}]"
 
-    # 选股阶段
-    X_test = test_data[factor_cols]
+    # 只取测试集开始那一天的横截面
+    test_day_data = test_data[test_data['date'] == test_start]
+    if test_day_data.empty:
+        print(f"{period_str} ⚠️ test_data 中未找到日期为 {test_start} 的数据，跳过本轮选股。")
+        return np.nan, [np.nan] * len(factor_cols)
+
+    # 选股阶段：只用那天的横截面数据
+    X_test = test_day_data[factor_cols]
     X_test = pd.DataFrame(imputer.transform(X_test), columns=X_test.columns, index=X_test.index)
 
-    # 模型是否包含目标标签？
     if target_label not in model.classes_:
         print(f"{period_str} ⚠️ 当前模型未包含 label={target_label}，模型标签为：{model.classes_}，跳过本轮选股。")
         return np.nan, [np.nan] * len(factor_cols)
 
-    # 查找目标 label 的列索引
     label_index = list(model.classes_).index(target_label)
     y_pred = model.predict_proba(X_test)[:, label_index]
 
-    # 1. 构建原始预测 DataFrame
+    # 存储预测准确率（新增）
+    if 'label' in test_day_data.columns:
+        y_true = test_day_data['label'].values
+        y_pred_labels = model.predict(X_test)
+        accuracy = (y_pred_labels == y_true).mean()
+        # 定义保存文件路径
+        acc_file = os.path.join(params['result_dir'], 'label_accuracy.csv')
+        # 如果文件不存在，先写入表头
+        if not os.path.exists(acc_file):
+            with open(acc_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(['date', 'accuracy'])
+        # 追加本次结果
+        with open(acc_file, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow([test_start, f"{accuracy:.4f}"])
+        # —— 新增结束 ——
+
     pred_df = pd.DataFrame({
-        'stock_id': test_data['stock_id'],
+        'stock_id': test_day_data['stock_id'],
         'score': y_pred
     })
 
-    # 2. 对每只股票聚合（例如取平均预测得分）
     agg_pred_df = pred_df.groupby('stock_id', as_index=False)['score'].mean()
-
-    # 3. 按聚合后的得分排序，选出 top_k
     top_stocks = agg_pred_df.sort_values(by='score', ascending=False).head(top_k)
     selected_ids = top_stocks['stock_id'].astype(str).tolist()
 
-    # 打印 top_k 股票及其预测标签
-    print(f"🔎 Top-{top_k} 选股及预测标签：")
-    print(top_stocks[['stock_id', 'score']])
+    output_file = os.path.join(params['result_dir'], f"top_k_stocks_{params['model_type']}.txt")
+    with open(output_file, "a", encoding="utf-8") as f:
+        f.write(f"{test_start}  🔎 Top-{top_k} 选股及预测标签：\n")
+        f.write(top_stocks[['stock_id', 'score']].to_string(index=False))
 
-    # 查未来收益
-    hold_returns = hold_data[hold_data['stock_id'].astype(str).isin(selected_ids)]
+    hold_returns = hold_data[
+        (hold_data['date'] == hold_start) &
+        (hold_data['stock_id'].astype(str).isin(selected_ids))
+    ]
 
-    # 保存异常情况
     error_prefix = f"error_{str(test_start)[:10].replace('-', '')}"
     if hold_returns.empty:
         print(f"{period_str} ⚠️ hold_data 中未找到任何选中股票，跳过该期。")
-
-        # 保存 top_k 股票及其得分
         top_stocks.to_csv(f"./debug/{error_prefix}_no_hold_data.csv", index=False)
-
         avg_return = np.nan
-
     elif hold_returns[return_col].isnull().all():
         print(f"{period_str} ⚠️ 所有选中股票在 hold_data 中 future_return 全为空，股票列表如下：")
         print(top_stocks)
-
-        # 保存 hold_returns 的原始内容
         hold_returns.to_csv(f"./debug/{error_prefix}_all_return_nan.csv", index=False)
         top_stocks.to_csv(f"./debug/{error_prefix}_top_stocks.csv", index=False)
-
         avg_return = np.nan
-
     else:
         valid_returns = hold_returns[return_col].dropna()
         if len(valid_returns) < 5:
             print(f"{period_str} ⚠️ 有效收益样本少于5个（仅 {len(valid_returns)} 支），跳过该期。")
-
-            # 保存
             hold_returns.to_csv(f"./debug/{error_prefix}_too_few_valid.csv", index=False)
             avg_return = np.nan
         else:
@@ -143,12 +165,21 @@ def backtest_pipeline(df, factor_cols, label_col, return_col, stock_id_col,  sto
     step_days = step_months * 21
     hold_days = hold_months * 21
 
+    start_idx_cnt, round_cnt = start_idx, 0
+    # 计算一下一共多少轮，方便打印
+    while start_idx_cnt + train_days + test_days + hold_days <= len(dates):
+        start_idx_cnt += step_days
+        round_cnt += 1
+
+    round_num = 1
     while start_idx + train_days + test_days + hold_days <= len(dates):
+        print(f"\n================ 开始回测第 {round_num} / {round_cnt} 轮 ================\n")
         # 计算时间范围
         train_start = dates[start_idx] # 3年
         train_end = dates[start_idx + train_days - 1]
-        test_start = dates[start_idx + train_days] # 1年
+        test_start = dates[start_idx + train_days]  # 1年
         test_end = dates[start_idx + train_days + test_days - 1]
+        hold_start = dates[start_idx + train_days + test_days]
         hold_end = dates[start_idx + train_days + test_days + hold_days - 1] # 4个月
 
         train_data = df[(df['date'] >= train_start) & (df['date'] <= train_end)]
@@ -164,8 +195,40 @@ def backtest_pipeline(df, factor_cols, label_col, return_col, stock_id_col,  sto
         X_train = train_data[factor_cols]
         y_train = train_data[label_col]
         print("✅ 本轮训练标签种类：", sorted(y_train.unique()))
+        # ==========更robust的缺失值处理===============
+        inf2nan = FunctionTransformer(
+            func=lambda X: np.where(np.isfinite(X), X, np.nan),
+            validate=False
+        )
+
+        pipeline = Pipeline([
+            ('inf2nan', inf2nan),
+            ('imputer', SimpleImputer(strategy='mean')),
+        ])
+
+        X_train = pd.DataFrame(
+            pipeline.fit_transform(X_train),
+            columns=X_train.columns,
+            index=X_train.index
+        )
+
+        test_data_filled = test_data.copy()
+        test_data_filled[factor_cols] = pd.DataFrame(
+            pipeline.transform(test_data[factor_cols]),
+            columns=factor_cols,
+            index=test_data.index
+        )
+
+        hold_data_filled = hold_data.copy()
+        hold_data_filled[factor_cols] = pd.DataFrame(
+            pipeline.transform(hold_data[factor_cols]),
+            columns=factor_cols,
+            index=hold_data.index
+        )
         # 缺失值处理->生成impute
         X_all_for_impute = X_train.copy()
+        # X_all_for_impute.replace([np.inf, -np.inf], np.nan, inplace=True)
+        print(X_all_for_impute.isna().sum()[lambda x: x > 0])
         imputer_test = SimpleImputer(strategy='mean')
         imputer_test.fit(X_all_for_impute)
         # 缺失值处理->使用impute
@@ -184,8 +247,7 @@ def backtest_pipeline(df, factor_cols, label_col, return_col, stock_id_col,  sto
         )
 
         # 训练模型
-        model = train_model_with_tscv(X_train, y_train, factor_cols, model_type='dt')
-
+        model = train_model_with_tscv(X_train, y_train, model_type=params['model_type'])
         # 选股 + 回测收益
         avg_return, feat_importance = select_stocks_and_backtest(
             model=model,
@@ -197,7 +259,7 @@ def backtest_pipeline(df, factor_cols, label_col, return_col, stock_id_col,  sto
             top_k=15,
             test_start=test_start,
             test_end=test_end,
-            hold_end=hold_end
+            hold_start=hold_start
         )
 
         results.append({
@@ -212,30 +274,152 @@ def backtest_pipeline(df, factor_cols, label_col, return_col, stock_id_col,  sto
         })
 
         start_idx += step_days
+        round_num += 1
 
     return pd.DataFrame(results), pd.DataFrame(feature_importance_list)
 
+def compute_performance_metrics(backtest_df, risk_free_rate=0.0):
+    backtest_df = backtest_df.copy()
+    returns = backtest_df['avg_return'].dropna()
 
-def plot_cumulative_return(backtest_df):
+    if returns.empty or len(returns) < 2:
+        return {
+            'Annualized Return': np.nan,
+            'Volatility': np.nan,
+            'Sharpe Ratio': np.nan,
+            'Max Drawdown': np.nan
+        }
+
+    # 计算两个 rebalancing 日期之间的天数
+    period_len = (backtest_df['test_period_start'].iloc[1] - backtest_df['test_period_start'].iloc[0]).days
+    annual_factor = 252 / period_len if period_len > 0 else 1
+
+    annualized_return = (1 + returns.mean()) ** annual_factor - 1
+    annualized_volatility = returns.std() * np.sqrt(annual_factor)
+    sharpe_ratio = (annualized_return - risk_free_rate) / annualized_volatility if annualized_volatility != 0 else np.nan
+
+    cum_returns = (1 + returns).cumprod()
+    peak = cum_returns.cummax()
+    drawdown = (cum_returns - peak) / peak
+    max_drawdown = drawdown.min()
+
+    return {
+        'Annualized Return': annualized_return,
+        'Volatility': annualized_volatility,
+        'Sharpe Ratio': sharpe_ratio,
+        'Max Drawdown': max_drawdown
+    }
+
+
+def plot_cumulative_return(backtest_df, risk_free_rate=0.0):
+    backtest_df = backtest_df.copy()
     backtest_df['cum_return'] = (1 + backtest_df['avg_return']).cumprod()
 
+    # 计算绩效指标
+    metrics = compute_performance_metrics(backtest_df, risk_free_rate)
+
+    # 累计收益图
     plt.figure(figsize=(10, 6))
     plt.plot(backtest_df['test_period_start'], backtest_df['cum_return'], label='Cumulative Return', marker='o')
     plt.xlabel('Time')
     plt.ylabel('Cumulative Return')
-    plt.title('Backtest Performance')
+    plt.title('Cumulative Return Over Time')
     plt.grid(True)
-
-    # 添加数据点标签
-    for i in range(len(backtest_df)):
-        x = backtest_df['test_period_start'].iloc[i]
-        y = backtest_df['cum_return'].iloc[i]
-        plt.scatter(x, y, color='red')  # 标出数据点
-        plt.text(x, y, f'{y:.2f}', ha='center', va='bottom', fontsize=8, rotation=45)
-
     plt.xticks(rotation=45)
     plt.tight_layout()
     plt.legend()
+    plt.show()
+
+    # 各绩效指标折线图
+    metric_names = ['Annualized Return', 'Volatility', 'Sharpe Ratio', 'Max Drawdown']
+    y_labels = ['Annualized Return (%)', 'Volatility (%)', 'Sharpe Ratio', 'Max Drawdown (%)']
+
+    for i, metric in enumerate(metric_names):
+        plt.figure(figsize=(10, 4))
+        values = backtest_df[metric]
+        if 'Return' in metric or 'Volatility' in metric or 'Drawdown' in metric:
+            values = values * 100  # 转换为百分比展示
+
+        plt.plot(backtest_df['test_period_start'], values, marker='o')
+        plt.xlabel('Time')
+        plt.ylabel(y_labels[i])
+        plt.title(f'{metric} Over Time')
+        plt.grid(True)
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.show()
+
+
+def plot_full_backtest_performance(backtest_df, risk_free_rate=0.0, show_rf_line=True):
+    backtest_df = backtest_df.copy()
+
+    # 策略累计收益
+    backtest_df['cum_return'] = (1 + backtest_df['avg_return']).cumprod()
+
+    # 基准累计收益
+    if 'benchmark_return' in backtest_df.columns:
+        backtest_df['cum_benchmark'] = (1 + backtest_df['benchmark_return']).cumprod()
+    else:
+        raise ValueError("DataFrame must include 'benchmark_return' column.")
+
+    # 最大回撤计算
+    cum_returns = backtest_df['cum_return']
+    peak = cum_returns.cummax()
+    drawdown = (cum_returns - peak) / peak
+
+    # 绩效指标
+    metrics = compute_performance_metrics(backtest_df, risk_free_rate)
+
+    # 画图
+    plt.figure(figsize=(12, 7))
+
+    # 策略累计收益
+    plt.plot(backtest_df['test_period_start'], backtest_df['cum_return'], label='Strategy', color='blue',
+             linewidth=2)
+
+    # 基准累计收益
+    plt.plot(backtest_df['test_period_start'], backtest_df['cum_benchmark'], label='Benchmark', color='gray',
+             linestyle='--')
+
+    # 最大回撤阴影
+    plt.fill_between(backtest_df['test_period_start'], cum_returns, peak, where=(cum_returns < peak), color='red',
+                     alpha=0.2, label='Drawdown')
+
+    # 每个点标注收益
+    for i in range(len(backtest_df)):
+        x = backtest_df['test_period_start'].iloc[i]
+        y = backtest_df['cum_return'].iloc[i]
+        plt.scatter(x, y, color='blue', s=30)
+        plt.text(x, y, f'{y:.2f}', ha='center', va='bottom', fontsize=8, rotation=45)
+
+    # 无风险参考线（复利年化）
+    if show_rf_line:
+        n_periods = len(backtest_df)
+        period_len = (backtest_df['test_period_start'].iloc[1] - backtest_df['test_period_start'].iloc[0]).days
+        annual_factor = 252 / period_len
+        rf_per_period = (1 + risk_free_rate) ** (1 / annual_factor) - 1
+        backtest_df['cum_rf'] = (1 + rf_per_period) ** np.arange(n_periods)
+        plt.plot(backtest_df['test_period_start'], backtest_df['cum_rf'], label='Risk-Free', color='green',
+                 linestyle=':')
+
+    # 图例与轴
+    plt.xlabel('Time')
+    plt.ylabel('Cumulative Return')
+    plt.title('Backtest Performance with Benchmark & Drawdown')
+    plt.xticks(rotation=45)
+    plt.grid(True)
+    plt.legend()
+
+    # 性能指标文本框
+    textstr = '\n'.join([
+        f"Annualized Return: {metrics['Annualized Return']:.2%}",
+        f"Volatility: {metrics['Volatility']:.2%}",
+        f"Sharpe Ratio: {metrics['Sharpe Ratio']:.2f}",
+        f"Max Drawdown: {metrics['Max Drawdown']:.2%}"
+    ])
+    plt.gcf().text(0.15, 0.75, textstr, fontsize=10, bbox=dict(facecolor='white', alpha=0.5))
+
+    plt.tight_layout()
     plt.show()
 
 
@@ -251,58 +435,39 @@ def get_stock_list_for_date(current_date, stock_list_df):
     return set(str(latest_row['stock_list']).split(','))
 
 
-def clean_nan(X, strategy='mean'):  # 废弃
-    if strategy not in ['mean', 'median']:
-        raise ValueError("strategy must be 'mean' or 'median'")
-
-    imputer = SimpleImputer(strategy=strategy)
-    X_clean = pd.DataFrame(imputer.fit_transform(X), columns=X.columns, index=X.index)
-
-    return X_clean, imputer
-
-def test_get_stock_list_for_date():  # 测试函数
-    # 读取股票池快照数据
-    stock_list_df = pd.read_csv(
-        os.path.join(params['data_dir'], './best_stock_window_snapshot.csv'),
-        parse_dates=['date']
-    )
-
-    # 指定要测试的日期
-    test_date = pd.to_datetime('2020-05-01')
-
-    # 调用主函数
-    stock_set = get_stock_list_for_date(test_date, stock_list_df)
-
-    # 打印结果
-    print(f"股票池日期 <= {test_date} 最近的一期包含 {len(stock_set)} 支股票。")
-    print("前10只股票代码如下：")
-    print(sorted(list(stock_set))[:10])  # 显示前10只股票代码
-
-
-
 if __name__ == '__main__':
-    # test_get_stock_list_for_date()
-    # 1. 读取并准备数据
-    df = pd.read_csv(os.path.join(params['data_dir'], 'merge_data_ret.csv'), encoding='utf-8-sig')  # 假设已有整理好的特征与标签数据
-    df['日期'] = pd.to_datetime(df['日期'])  # 确保日期列为 datetime 类型
-    df.sort_values(['日期', '证券代码'], inplace=True)
-
-    df.rename(columns={'日期': 'date', '证券代码': 'stock_id'}, inplace=True)
-
-    # 2. 定义列名
-    factor_cols = ['6m_return', '11m_return']
-    # factor_cols = [
-    #     '股票总市值', '股票价格', '每股收益', '每股净资产',
-    #     '每股主营业务收入', '每股经营现金流', '现金流比股价',
-    #     '净资产增长率', '主营业务收入增长率', '现金流增长率',
-    #     '企业价值含货币资金', '企业价值不含货币资金', '企业倍数',
-    #     'pe', 'pb', 'pcf', 'ps',
-    #     'circulatedmarketvalue', 'liquidility', 'turnover'
-    # ]
-
+    # 1.定义列名
+    factor_cols = ['6m_return', '11m_return', '总市值',  # 日度数据
+                   'pe', 'pb', 'ps', '现金流比股价',  # 日度季度组合数据
+                   '净资产收益率A', '每股收益',  # 季度数据
+                   '资本支出比总市值', '流动比率', 'ocfp', 'capex', 'evebit', 'evebitda', '企业价值不含货币资金',
+                   '12m_lagged_return', '24m_lagged_return',
+                   'Beta3Y_Cov', 'Beta3Y_Reg']
+    """
+        资本支出 / 总市值
+        流动比率： 流动资产（缺）/流动负债（有）
+        ocfp: 经营活动现金流量净额(有）/ 净资产（无？）
+        capex: 资本支出/营业收入（都有）
+        evebit: 企业价值（用哪个？）/ EBIT(季度）
+        evebitda: 企业价值（用哪个？）/ EBITDA(季度）
+        两个lag，两个回归
+    """
     label_col = 'label'  # 分类标签：高/中/低收益（分类问题）
     return_col = 'ret_fwd_4m'  # 实际未来收益率（连续值，用于回测）
-    stock_id_col = 'stock_id'  # 股票代码
+    stock_id_col = 'stock_id'  # 股票代码 后面rename
+    cols_input = ['6m_return', '11m_return', '总市值',  # 日度数据
+                   'pe', 'pb', 'ps', '现金流比股价',  # 日度季度组合数据
+                   '净资产收益率A', '每股收益',  # 季度数据
+                   '资本支出比总市值', '流动比率', 'ocfp', 'capex', 'evebit', 'evebitda', '企业价值不含货币资金',
+                   '12m_lagged_return', '24m_lagged_return',
+                   'Beta3Y_Cov_y', 'Beta3Y_Reg_y',
+                   'date', 'code', 'label', 'ret_fwd_4m']
+
+    # 2. 读取并准备数据
+    df = pd.read_csv(os.path.join(params['data_dir'], 'merge_data_ret.csv'), encoding='utf-8-sig', usecols=cols_input)
+    df['date'] = pd.to_datetime(df['date'])  # 确保日期列为 datetime 类型
+    df.sort_values(['date', 'code'], inplace=True)
+    df.rename(columns={'code': 'stock_id', 'Beta3Y_Cov_y': 'Beta3Y_Cov', 'Beta3Y_Reg_y':'Beta3Y_Reg'}, inplace=True)
 
     # 读取股票池数据
     stock_list_df = pd.read_csv(os.path.join(params['data_dir'], './best_stock_window_snapshot.csv'), parse_dates=['date'])
@@ -318,14 +483,28 @@ if __name__ == '__main__':
         train_years=3,
         test_years=1,
         hold_months=4,
-        step_months=4,
+        step_months=120,  # 测试时改大一点，算的快，基准为4
     )
 
     # 4. 输出回测结果与因子重要性
-    backtest_df.to_csv(os.path.join(params['result_dir'],'backtest_results.csv'), index=False)
-    feature_df.to_csv(os.path.join(params['result_dir'],'feature_importance_time_series.csv'), index=False)
+    backtest_df.to_csv(os.path.join(params['result_dir'], f"backtest_results_{params['model_type']}.csv"), index=False)
+    feature_df.to_csv(os.path.join(params['result_dir'], f"feature_importance_time_series_{params['model_type']}.csv"),
+                      index=False)
 
     # 5. 可视化收益曲线
     plot_cumulative_return(backtest_df)
-
+    # plot_full_backtest_performance(backtest_df, risk_free_rate=0.0, show_rf_line=False)
+    draw.draw_all()
     print("回测完成，结果已保存！")
+
+
+
+
+# def clean_nan(X, strategy='mean'):  # 废弃
+#     if strategy not in ['mean', 'median']:
+#         raise ValueError("strategy must be 'mean' or 'median'")
+#
+#     imputer = SimpleImputer(strategy=strategy)
+#     X_clean = pd.DataFrame(imputer.fit_transform(X), columns=X.columns, index=X.index)
+#
+#     return X_clean, imputer

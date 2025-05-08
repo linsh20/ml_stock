@@ -1,4 +1,4 @@
-# README
+# 代码说明和结果展示
 
 ## 文件结构
 
@@ -11,6 +11,8 @@
 ├── run.py
 ├── prepare.py
 ├── zz500_merge.py
+├── draw.py
+├── read_csv.py
 ├── config.py
 └── README.md
 ```
@@ -20,28 +22,51 @@
 - `merge_data.csv` 日度级别的数据，后面进一步处理
 - `500.csv`成分股变化数据 
 
+### 运行流程
+
+1. 配置环境，安装对应的包
+2. 运行`zz500_merge.py`
+3. 运行`prepare.py` 
+4. 运行`run.py`
+
 ## 代码注释
 
 ### `zz500_merge.py`：处理股票列表
 
+输入：中证500成分股变化数据；输出：每只股票在中证500内的时间范围
+
 1. 将成分股变化数据转为成分股和时间的对应数据
-2. 生成每个股票在成分股内的时间范围（备注：只考虑最早和最晚，没有考虑中间被剔除的情况）
+2. 生成每个股票在成分股内的时间范围（备注：要求所有交易日均在中证500组合内）
 
-### `prepare.py`：股票数据准备
+### `prepare.py`：股票数据清洗
 
-1. `calc_ret_label`计算收益率
-   - 计算未来4个月和12个月的收益率，对4个月的收益率打label
-2. `calc_momentum_factor`计算动量因子
-   - 计算过去6个月和11个月的动量因子
+输入：日度和季度原始数据、每支股票在中证500内的时间范围；输出：因子、符合交易期间长度的日期和股票列表
+
+1. `merge_season_data`：将季度数据所需列和日度数据进行对应，整合进日度数据表中
+2. 数据计算
+   1. `calc_ret_label`：计算收益率
+      - 计算未来4个月和12个月的收益率，对4个月的收益率打label
+   2. `calc_momentum_factor`：计算动量因子和Lagged_return
+      - 计算过去6个月和11个月的动量因子
+      - Lagged_return为过去X日的12个月收益率
+   3. `create_factors`：处理其他因子，主要涉及对excel列之间的运算
+   4. `calc_beta_3y_factors`：从中证500指数引入市场收益率，计算`beta_cov`和`beta_reg`
 3. 计算符合条件的股票，和日期进行对应
+   1. `calc_period`：结合中证500数据和价格数据，生成每支股票可用日期范围 `filtered_stock_date_range.csv`
+   2. `period2cnt`：计算每日数据可用的股票数量，画图可视化
+   3. `get_date_list`：在`calc_period`结果的基础上，遍历4个月（84d），计算最佳开始日（最大化股票总数量），输出`best_stock_window_snapshot.csv`，为开始日和股票List的匹配结果
 
-### ``run.py``：核心流程
+备注：缺失值的处理在`run.py`中进行
+
+### ``run.py``：核心部分
+
+输入：清洗好的数据；输出：结果
 
 #### 1. 入口： `main`函数
 
 1. 读取价格数据 (read： `merge_data_ret.csv`)，作为`df`
-2. 从数据中选取作为因子的列：`factor_cols = ['资产收益率A', '息税前盈余']`
-3. 使用之前根据数据+中证500筛选好的股票列表数据：`best_stock_window_snapshot.csv`，作为`stock_list_df`
+2. 从数据中选取作为因子的列：`factor_cols = ['6m_return', '11m_return']`
+3. 使用之前根据数据+中证500筛选好的满足条件的股票列表数据：`best_stock_window_snapshot.csv`，作为`stock_list_df`
 4. ==调用==回测主要流程函数：`backtest_df, feature_df = backtest_pipeline()`
 5. 输出结果：回测结果`backtest_df`和因子重要性`feature_df`
 
@@ -62,7 +87,7 @@ def backtest_pipeline(df, factor_cols, label_col, return_col, stock_id_col,  sto
 #### 3. 训练： `train_model_with_tscv`函数
 
 ```python
-def train_model_with_tscv(X_train, y_train, factor_cols, model_type='rf', n_splits=10)
+def train_model_with_tscv(X_train, y_train, model_type='rf', n_splits=10)
 ```
 
 1. 选择模型类型
@@ -79,22 +104,56 @@ def select_stocks_and_backtest(model, X_test, hold_data, return_col, imputer, st
 2. 查找这些股票在`hold`集上的收益率，取平均（因为假设平均持仓）；检查有效股票数量
 3. 返回收益率平均、模型的特征重要性
 
-### `read_csv.py`
+### 其他文件
 
-用来根据股票代码或日期筛选csv中的行，解决csv过大无法读取的问题
+- `read_csv.py`：用来根据列字段（如股票代码或日期）筛选csv中的行，解决csv过大不方便查看的问题
+- `draw.py`：用来画图展示结果
+- `config.py`：用来保存参数，比如文件路径
 
 ## 结果展示
 
-1. 满足条件的股票数量
+### 数据展示
 
-   ![image-20250506211754414](C:\Users\linsh\AppData\Roaming\Typora\typora-user-images\image-20250506211754414.png)
+1. 满足条件的股票数量（数据和中证500取交集，要求所有时间都在中证500内）
 
-2. 只使用两个动量因子的回测结果 ['11m_mom', '6m_mom']
+![image-20250506211754414](C:\Users\linsh\AppData\Roaming\Typora\typora-user-images\image-20250506211754414.png)
+
+### 结果展示
+
+#### 只是用两个动量因子的回测结果  ['11m_mom', '6m_mom']
+
+1. 累计收益
    ![image-20250506212258527](C:\Users\linsh\AppData\Roaming\Typora\typora-user-images\image-20250506212258527.png)
 
-## 运行流程
+2. feature_importance
 
-1. 安装对应的包
-2. 运行`zz500_merge.py`
-3. 运行`prepare.py` 
-4. 运行`run.py`
+   ![image-20250506214951098](C:\Users\linsh\AppData\Roaming\Typora\typora-user-images\image-20250506214951098.png)
+
+3. 每个阶段的收益（4个月）
+
+   ![image-20250506215335325](C:\Users\linsh\AppData\Roaming\Typora\typora-user-images\image-20250506215335325.png)
+
+字段「证券代码」共有 36 个不同值。（有两段连续4年4个月的）
+
+字段「证券代码」共有 479 个不同值。（有两段的）
+
+流动比例：缺流动资产、净资产，用的总资产
+
+
+
+当前版本修改：
+
+1. 改return的计算逻辑
+2. 检查label计算方法（无误
+3. 改zz500的计算方法：延长4年4个月，取交集
+4. 加入两个beta因子
+
+
+
+
+
+
+
+
+
+todo：收益率计算
