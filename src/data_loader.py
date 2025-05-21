@@ -4,7 +4,10 @@ from config import params
 
 
 def get_daily_price_pd(usecols=[]):
-    df = pd.read_parquet('./data/merge_data_ret.parquet', columns=usecols)
+    if len(usecols) == 0:
+        df = pd.read_parquet('./data/processed/merge_data.parquet')
+    else:
+        df = pd.read_parquet('./data/processed/merge_data.parquet', columns=usecols)
     # df = pd.read_csv(os.path.join(params['data_dir'], 'merge_data_ret.csv'), encoding='utf-8-sig', usecols=usecols)
     # if usecols:
     #     df = df[usecols]

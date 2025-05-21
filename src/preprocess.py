@@ -251,5 +251,5 @@ def process_daily_season_data(): # 1.merge季度日度和财报公告日数据 2
 
 
 if __name__ == "__main__":
-    # daily_data_2_stock_list()
-    process_daily_season_data()
+    daily_data_2_stock_list()
+    # process_daily_season_data()

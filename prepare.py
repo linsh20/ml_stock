@@ -33,6 +33,13 @@ def calc_forward_returns(group):
 
     group['ret_fwd_12m'] = (group['股票价格'].shift(-252) / group['股票价格']) - 1
     group['ret_fwd_4m'] = (group['股票价格'].shift(-84) / group['股票价格']) - 1
+
+    # ——调试区开始——
+    print(">>> in calc_forward_returns, code =", group['code'].iloc[0])
+    print(group[['date', '股票价格', 'ret_fwd_12m']].tail(3))
+    # ——调试区结束——
+
+
     return group
 
 
@@ -42,6 +49,7 @@ def calc_ret_label(df):
 
     # 按股票分组计算未来收益率
     df = df.groupby('code').apply(calc_forward_returns).reset_index(drop=True)
+    print(list(df.columns))
 
     # 用未来12个月收益率打标签
     df['label'] = df['ret_fwd_12m'].apply(label_return)
@@ -355,11 +363,13 @@ def calc_beta_3y_factors(df, n_jobs=-1):
     return df
 
 
-def calc_example(): # TODO： 未经测试
-    df = data_loader.get_stock_list_pd()
+def calc_example(): #
+    df = data_loader.get_daily_price_pd()
+    df = df[df['code'] == '000006'].copy() # 用于测试
+    print(list(df.columns))
     # df = pd.read_csv(os.path.join(params['data_dir'], 'merge_data.csv'), parse_dates=['日期'])
     # df.rename(columns={'日期': 'date', '证券代码': 'code'}, inplace=True)
-    # TODO
+    #
     df = df.dropna(subset=['date'])
     # df = merge_season_data(df, os.path.join(params['data_dir'], 'season_data.csv'),
     #                        cols=['EBIT', 'EBITDA'])
@@ -369,12 +379,11 @@ def calc_example(): # TODO： 未经测试
     print("finish calc momentum factor")
     df = create_factors(df)
     print("finish create factors")
-    df = pd.read_csv(os.path.join(params['data_dir'], 'merge_data_ret.csv'), parse_dates=['date'])
-    df = df[df['code'] == 6].copy()
     df = calc_beta_3y_factors(df)
     print("finish calc_beta_3y_factors")
     # df.to_csv(os.path.join(params['data_dir'], 'merge_data_ret.csv'), index=False, encoding='utf-8-sig')
-    df.to_parquet(os.path.join(params['data_dir'], 'merge_data_ret.parquet'), index=False, engine='pyarrow')
+    df['date'] = pd.to_datetime(df['date']).dt.date
+    df.to_parquet('./data/processed/merge_data_ret.parquet', index=False, engine='pyarrow')
     print("已保存df")
 
 
