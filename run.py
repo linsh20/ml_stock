@@ -16,6 +16,7 @@ import csv
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
 from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
+from src import data_loader
 
 def train_model_with_tscv(X_train, y_train, model_type='dt', n_splits=5):
     tscv = TimeSeriesSplit(n_splits=n_splits)
@@ -700,15 +701,18 @@ if __name__ == '__main__':
                    'date', 'code', 'label', 'ret_fwd_4m']
 
     # 2. 读取并准备数据
-    df = pd.read_csv(os.path.join(params['data_dir'], 'merge_data_ret.csv'), encoding='utf-8-sig', usecols=cols_input)
+    # df = pd.read_csv(os.path.join(params['data_dir'], 'merge_data_ret.csv'), encoding='utf-8-sig', usecols=cols_input)
+    df = data_loader.get_daily_price_pd(usecols=cols_input)
     df['date'] = pd.to_datetime(df['date'])  # 确保日期列为 datetime 类型
     df.sort_values(['date', 'code'], inplace=True)
     df.rename(columns={'code': 'stock_id', 'Beta3Y_Cov_y': 'Beta3Y_Cov', 'Beta3Y_Reg_y':'Beta3Y_Reg'}, inplace=True)
 
     # 读取股票池数据
-    stock_list_df = pd.read_csv(os.path.join(params['data_dir'], './best_stock_window_snapshot.csv'), parse_dates=['date'])
+    # stock_list_df = pd.read_csv(os.path.join(params['data_dir'], './best_stock_window_snapshot.csv'), parse_dates=['date'])
+    stock_list_df = data_loader.get_stock_list_pd()
 
     # 清空输出文档
+
     la_file = os.path.join(params['result_dir'], f"top_k_stocks_{params['model_type']}.txt")
     with open(la_file, "w", encoding="utf-8") as f:
         pass
