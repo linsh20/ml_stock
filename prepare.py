@@ -7,6 +7,7 @@ from sklearn.linear_model import LinearRegression
 from datetime import timedelta
 from joblib import Parallel, delayed
 from tqdm import tqdm
+from src import data_loader
 
 def label_return(r): # 打标签
     if r >= 0.15:
@@ -354,79 +355,31 @@ def calc_beta_3y_factors(df, n_jobs=-1):
     return df
 
 
-# def calc_beta_3y_factors(df):
-#     # 加载中证500指数数据
-#     market_df = pd.read_csv('./data/905_price.csv', parse_dates=['日期'])
-#     market_df.rename(columns={'日期': 'date', '指数回报率': 'market_ret'}, inplace=True)
-#     market_df['market_ret'] = market_df['market_ret'].astype(float)
-#
-#     # 计算个股每日收益率
-#     df.sort_values(by=['code', 'date'], inplace=True)
-#     df['ret'] = df.groupby('code')['股票价格'].pct_change()
-#
-#     # 初始化结果
-#     beta_cov_list = []
-#     beta_reg_list = []
-#
-#     # 设置三年窗口
-#     window_days = 365 * 3
-#
-#     # 遍历每个股票在每个日期的 beta（3年窗口）
-#     for code in df['code'].unique():
-#         df_stock = df[df['code'] == code].copy()
-#         df_stock = df_stock.merge(market_df, on='date', how='left')
-#
-#         for current_date in df_stock['date'].dropna().unique():
-#             window_start = current_date - timedelta(days=window_days)
-#             df_window = df_stock[(df_stock['date'] >= window_start) & (df_stock['date'] <= current_date)].dropna()
-#
-#             if len(df_window) < 60:
-#                 beta_cov_list.append({'code': code, 'date': current_date, 'Beta3Y_Cov': np.nan})
-#                 beta_reg_list.append({'code': code, 'date': current_date, 'Beta3Y_Reg': np.nan})
-#                 continue
-#
-#             x = df_window[['market_ret']].values
-#             y = df_window['ret'].values
-#
-#             # 协方差 beta
-#             cov = np.cov(y, x[:, 0])[0, 1]
-#             var = np.var(x[:, 0])
-#             beta_cov = cov / var if var != 0 else np.nan
-#             beta_cov_list.append({'code': code, 'date': current_date, 'Beta3Y_Cov': beta_cov})
-#
-#             # 回归 beta
-#             model = LinearRegression()
-#             model.fit(x, y)
-#             beta_reg = model.coef_[0]
-#             beta_reg_list.append({'code': code, 'date': current_date, 'Beta3Y_Reg': beta_reg})
-#
-#     # 合并结果
-#     beta_cov_df = pd.DataFrame(beta_cov_list)
-#     beta_reg_df = pd.DataFrame(beta_reg_list)
-#     df = df.merge(beta_cov_df, on=['code', 'date'], how='left')
-#     df = df.merge(beta_reg_df, on=['code', 'date'], how='left')
-#
-#     return df
-
-
-if __name__ == '__main__':
+def calc_example(): # TODO： 未经测试
+    df = data_loader.get_stock_list_pd()
     # df = pd.read_csv(os.path.join(params['data_dir'], 'merge_data.csv'), parse_dates=['日期'])
     # df.rename(columns={'日期': 'date', '证券代码': 'code'}, inplace=True)
-    # df = df.dropna(subset=['date'])
+    # TODO
+    df = df.dropna(subset=['date'])
     # df = merge_season_data(df, os.path.join(params['data_dir'], 'season_data.csv'),
     #                        cols=['EBIT', 'EBITDA'])
     # print("finish merge season data")
-    # df = calc_ret_label(df)  # 必须先算
-    # df = calc_momentum_factor(df)
-    # print("finish calc momentum factor")
-    # df = create_factors(df)
-    # print("finish create factors")
-    # df = pd.read_csv(os.path.join(params['data_dir'], 'merge_data_ret.csv'), parse_dates=['date'])
-    # df = df[df['code'] == 6].copy()
-    # df = calc_beta_3y_factors(df)
-    # print("finish calc_beta_3y_factors")
+    df = calc_ret_label(df)  # 必须先算
+    df = calc_momentum_factor(df)
+    print("finish calc momentum factor")
+    df = create_factors(df)
+    print("finish create factors")
+    df = pd.read_csv(os.path.join(params['data_dir'], 'merge_data_ret.csv'), parse_dates=['date'])
+    df = df[df['code'] == 6].copy()
+    df = calc_beta_3y_factors(df)
+    print("finish calc_beta_3y_factors")
     # df.to_csv(os.path.join(params['data_dir'], 'merge_data_ret.csv'), index=False, encoding='utf-8-sig')
-    # print("已保存df")
-    calc_period()
-    period2cnt()
-    get_date_list()
+    df.to_parquet(os.path.join(params['data_dir'], 'merge_data_ret.parquet'), index=False, engine='pyarrow')
+    print("已保存df")
+
+
+if __name__ == '__main__':
+    calc_example()
+    # calc_period()
+    # period2cnt()
+    # get_date_list()

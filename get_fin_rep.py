@@ -7,6 +7,7 @@ import time
 # 配置
 # csv_path = './data/read_csv_unique.csv'
 csv_path = './data/merge_data.csv'
+parquet_path = './data/raw/merge_final.parquet'
 output_dir = './data/financial'
 
 symbol = '资产负债表'  # ← 只下载这一张报表，可改为 '利润表' 或 '现金流量表'
@@ -22,7 +23,8 @@ def convert_stock_code(code):
         return 'sz' + code
 
 # 读取股票代码
-stock_df = pd.read_csv(csv_path, usecols = ['证券代码'])
+# stock_df = pd.read_csv(csv_path, usecols = ['证券代码'])
+stock_df = pd.read_parquet(parquet_path, columns = ['证券代码'])
 stock_codes = stock_df.iloc[:, 0].dropna().astype(str).str.zfill(6).unique()
 
 # 主循环：检查是否已存在文件，如果没有就下载

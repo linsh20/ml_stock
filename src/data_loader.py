@@ -37,7 +37,30 @@ def csv_2_parquet(file_path=""):
         print(f"转换失败: {file_path}, 错误信息: {e}")
 
 
+def par_code_2_str(parquet_path="", cols=[""]):
+    if not os.path.isfile(parquet_path) or not parquet_path.endswith('.parquet'):
+        print(f"❌ 无效的 Parquet 文件路径: {parquet_path}")
+        return
+
+    try:
+        df = pd.read_parquet(parquet_path)
+
+        for col in cols:
+            if col in df.columns:
+                df[col] = df[col].apply(lambda x: str(x).zfill(6))
+            else:
+                print(f"⚠️ 列 '{col}' 不存在于文件中，跳过")
+
+        df.to_parquet(parquet_path, engine='pyarrow', index=False)
+        print(f"✅ 已处理并覆盖保存文件: {parquet_path}")
+    except Exception as e:
+        print(f"❌ 处理失败: {parquet_path}, 错误信息: {e}")
+
+
 if __name__ == '__main__':
     os.getcwd()
     # csv_2_parquet('../data/merge_data_ret.csv')
-    csv_2_parquet(file_path='../data/raw/merge_final.csv')
+    # csv_2_parquet('../data/raw/season_500_0512.csv')
+    # csv_2_parquet(file_path='../data/raw/merge_final.csv')
+    # par_code_2_str(parquet_path='../data/raw/merge_final.parquet', cols=['证券代码'])
+    par_code_2_str(parquet_path='../data/raw/season_500_0512.parquet', cols=['证券代码'])
