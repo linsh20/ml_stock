@@ -3,6 +3,13 @@ import os
 import glob
 import pandas as pd
 
+
+def format_code_list(x):
+    print(x)
+    ret = ",".join([f"{str(code).zfill(6)}" for code in x])
+    return ret
+
+
 def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表
     """
     处理 merge_final.parquet：
@@ -55,6 +62,14 @@ def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表
     changed_list["add"] = adds
     changed_list["minus"] = mins
 
+    # 筛选掉因为停盘退市的中间零星换成分股
+    changed_list = changed_list[changed_list["add"].apply(lambda x: len(x) > 2)].reset_index(drop=True)
+
+    cl = changed_list.copy()  # 过滤后的列表，备份一下，因为后面要调格式
+
+    for col in ["code", "add", "minus"]:
+        if col in changed_list.columns:
+            changed_list[col] = changed_list[col].apply(format_code_list)
     # 导出 zz500_list.csv
     changed_list.to_csv(
         os.path.join(OUT_DIR, FNAME_ALL),
@@ -63,26 +78,28 @@ def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表
     )
     print(f"[1] 已写出 {len(changed_list)} 个有变动的调仓日列表 -> {FNAME_ALL}")
 
-    # -------- 5. 基于“有变动”列表做 9 期滑动窗口交集 --------
+    # -------- 5. 基于“有变动”列表做 9 期滑动窗口并集 --------
     records = []
-    cl = changed_list  # 过滤后的列表
+
     for i in range(len(cl) - 8):
         window = cl.iloc[i: i + 9]
         common = set(window.iloc[0]["code"])
         for codes in window["code"].iloc[1:]:
-            common &= set(codes)
+            common |= set(codes) # Key
         common = sorted(common)
 
-        begin_date = window.iloc[0]["date"]
-        test_date = window.iloc[8]["date"]
+        train_date = window.iloc[0]["date"]
+        test_date = window.iloc[6]["date"]
+        buy_date = window.iloc[8]["date"]
         if i + 9 < len(cl):
             end_date = cl.iloc[i + 9]["date"]
         else:
             end_date = window.iloc[8]["date"]  # window.iloc[8] 即第 9 期
 
         records.append({
-            "begin_date": begin_date,
+            "train_date": train_date,
             "test_date": test_date,
+            "buy_date": buy_date,
             "end_date": end_date,
             "count": len(common),
             "code": common,
@@ -90,6 +107,9 @@ def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表
         })
 
     win9_df = pd.DataFrame(records)
+    if "code" in win9_df.columns:
+         win9_df["code"] = win9_df["code"].apply(format_code_list)
+    win9_df = win9_df.rename(columns={'code' : 'stock_list'})
     win9_df.to_csv(
         os.path.join(OUT_DIR, FNAME_WIN9),
         index=False,

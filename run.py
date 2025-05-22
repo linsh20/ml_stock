@@ -10,6 +10,7 @@ import os
 from config import params
 from sklearn.impute import SimpleImputer
 import time
+from datetime import datetime
 from tqdm import tqdm
 import draw
 import csv
@@ -18,7 +19,15 @@ from sklearn.preprocessing import FunctionTransformer
 from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
 from src import data_loader
 
-def train_model_with_tscv(X_train, y_train, model_type='dt', n_splits=5):
+
+def format_seconds(seconds): # 打印时间的工具
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def train_model_with_tscv(X_train, y_train, model_type='dt', n_splits=5): # 模型训练
     tscv = TimeSeriesSplit(n_splits=n_splits)
 
     if model_type == 'dt':
@@ -61,82 +70,19 @@ def train_model_with_tscv(X_train, y_train, model_type='dt', n_splits=5):
     print(f"total use time : {time.time() - start_time:.2f} seconds")
     return best_model
 
-
-def select_stocks_and_backtest2(model, test_data, hold_data, factor_cols, return_col,
-                               imputer, top_k=15, test_start=None, test_end=None, hold_start=None):
-    period_str = f"[test period: {test_start} → {test_end}]"
-
-    # 1. 只取测试区间的数据
-    mask = (test_data['date'] >= test_start) & (test_data['date'] <= test_end)
-    test_window = test_data.loc[mask]
-    if test_window.empty:
-        print(f"{period_str} ⚠️ 在 test_data 中未找到 {test_start} 到 {test_end} 的数据，跳过本轮选股。")
-        return np.nan, [np.nan] * len(factor_cols)
-
-    # 2. 对每个测试日单独预测标签，并收集
-    preds_list = []
-    for day, grp in test_window.groupby('date'):
-        X_day = grp[factor_cols]
-        X_day = pd.DataFrame(imputer.transform(X_day),
-                             columns=factor_cols, index=grp.index)
-        # 这里使用 predict 返回离散标签
-        y_day_pred = model.predict(X_day)
-        df_day = pd.DataFrame({
-            'stock_id': grp['stock_id'].astype(str),
-            'pred_label': y_day_pred
-        }, index=grp.index)
-        preds_list.append(df_day)
-
-    all_preds = pd.concat(preds_list)
-
-    # 3. 聚合：按 stock_id 取平均预测标签
-    agg_pred_df = all_preds.groupby('stock_id', as_index=False)['pred_label'].mean()
-    # 4. 根据平均标签排序，选 top_k
-    top_stocks = agg_pred_df.sort_values(by='pred_label', ascending=False).head(top_k)
-    selected_ids = top_stocks['stock_id'].tolist()
-
-    # 将选股结果追加保存
-    output_file = os.path.join(params['result_dir'], f"top_k_stocks_{params['model_type']}.txt")
-    with open(output_file, "a", encoding="utf-8") as f:
-        f.write(f"{test_start} → {test_end}  🔎 Top-{top_k} 选股（平均预测标签）：\n")
-        f.write(top_stocks.to_string(index=False))
-        f.write("\n\n")
-
-    # 5. 回测：在 hold_data 中取 hold_start 当日的表现
-    hold_returns = hold_data[
-        (hold_data['date'] == hold_start) &
-        (hold_data['stock_id'].astype(str).isin(selected_ids))
-        ]
-
-    error_prefix = f"error_{str(test_start)[:10].replace('-', '')}"
-    if hold_returns.empty:
-        print(f"{period_str} ⚠️ hold_data 中未找到任何选中股票，跳过该期。")
-        avg_return = np.nan
-    elif hold_returns[return_col].isnull().all():
-        print(f"{period_str} ⚠️ 所有选中股票在 hold_data 中 {return_col} 全为空，跳过该期。")
-        avg_return = np.nan
-    else:
-        valid_returns = hold_returns[return_col].dropna()
-        if len(valid_returns) < 5:
-            print(f"{period_str} ⚠️ 有效收益样本少于5个（仅 {len(valid_returns)} 支），跳过该期。")
-            avg_return = np.nan
-        else:
-            avg_return = valid_returns.mean()
-            print(f"{period_str} ✅ 成功回测：平均收益为 {avg_return:.4f}，选股数 {len(valid_returns)}")
-
-    # 返回平均收益和原模型的特征重要性（如有）
-    fi = getattr(model, 'feature_importances_', [np.nan] * len(factor_cols))
-    return avg_return, fi
-
-
-
-
 def select_stocks_and_backtest(model, test_data, hold_data, factor_cols, return_col,
-                     imputer, top_k=15, test_start=None, test_end=None, hold_start=None,  target_label=5):
+                     imputer, top_k=15, test_start=None, test_end=None, hold_start=None,  target_label=5): # 选股回测
     period_str = f"[test period: {test_start} → {test_end}]"
 
-    # 只取测试集开始那一天的横截面
+    test_data = test_data.rename(columns={'code': 'stock_id'})
+    hold_data = hold_data.rename(columns={'code': 'stock_id'})
+
+    # 只取测试集结束（hold集开始）那一天的横截面
     test_day_data = test_data[test_data['date'] == test_end]
+    for i in (0,10): # 处理Hold集开始非交易日的情况
+        if not test_day_data.empty:
+            break
+        test_day_data = test_data[test_data['date'] == test_end - pd.Timedelta(days=i)]
     if test_day_data.empty:
         print(f"{period_str} ⚠️ test_data 中未找到日期为 {test_start} 的数据，跳过本轮选股。")
         return np.nan, [np.nan] * len(factor_cols)
@@ -367,139 +313,158 @@ def select_stocks_and_backtest(model, test_data, hold_data, factor_cols, return_
 #     return results_df, fi_df
 
 
-def backtest_pipeline(df, factor_cols, label_col, return_col, stock_id_col,  stock_list_df,  # 主函数
-                      train_years=3, test_years=1, hold_months=4, step_months=4):
+def backtest_pipeline(
+    df: pd.DataFrame,
+    factor_cols: list,
+    label_col: str,
+    return_col: str,
+    stock_id_col: str,
+    stock_list_df: pd.DataFrame,
+    schedule_csv: str = "./data/processed/zz500_list_filter.csv",
+    top_k: int = 15,
+    model_type: str = "dt",
+):
+    """基于中证 500 调仓节奏的回测框架。
+
+    参数说明
+    ----------
+    df : pd.DataFrame
+        主因子+标签数据，必须包含 ``date`` 列。
+    factor_cols : list[str]
+        因子列名列表。
+    label_col : str
+        监督学习标签列名。
+    return_col : str
+        个股未来持仓期收益列名，用于回测。
+    stock_id_col : str
+        股票代码列名。
+    stock_list_df : pd.DataFrame
+        股票池 DataFrame，含 ``date`` 与 ``stock_count``，使用 ``get_stock_list_for_date`` 做过滤。
+    schedule_csv : str, default "./data/processed/zz500_list_filter.csv"
+        调仓窗口定义文件，须含 ``train_date``, ``test_date``, ``buy_date``, ``end_date`` 四列。
+    top_k : int, default 15
+        每轮选出买入的股票数量。
+    model_type : str, default "lgbm"
+        传递给 ``train_model_with_tscv`` 的模型类型。
+    """
+
+    # ‼️ 1. 载入调仓日表并排序
+    schedule_df = pd.read_csv(
+        schedule_csv,
+        parse_dates=["train_date", "test_date", "buy_date", "end_date"],
+    ).sort_values("train_date").reset_index(drop=True)
+
+    # 2. 日期列标准化
+    df["date"] = pd.to_datetime(df["date"])
+    stock_list_df["date"] = pd.to_datetime(stock_list_df["date"])
+
     results = []
     feature_importance_list = []
 
-    # 找到第一个 stock_count > 0 的日期
-    stock_list_df['date'] = pd.to_datetime(stock_list_df['date'])
-    valid_start_date = stock_list_df[stock_list_df['stock_count'] > 0]['date'].min()
+    total_rounds = len(schedule_df)
+    start_time = time.time()
+    for ridx, row in schedule_df.iterrows():
+        # 用于测试 TEST
+        TEST_FLAG = False # 测试时改为True
+        if TEST_FLAG and ridx > 5 : # 还可以改为其他条件
+            break
+        # 测试段结束
+        # === 2.1 读取时间边界 ===
+        train_start = row["train_date"]
+        test_start = row["test_date"]
+        hold_start = row["buy_date"]  # 中证 500 阶段性调仓后买入时间
+        hold_end = row["end_date"]
+        train_end = test_start - pd.Timedelta(days=1)
+        test_end = hold_start - pd.Timedelta(days=1)
 
-    # 所有交易日期按时间顺序排序
-    df['date'] = pd.to_datetime(df['date'])
-    dates = sorted(df['date'].unique())
+        # 如数据不足，则跳过
+        if hold_end > df["date"].max():
+            print(
+                f"⚠️  数据不足，跳过第 {ridx + 1} 轮（hold_end={hold_end.date()} 超出数据范围）"
+            )
+            continue
 
-    # 找到 valid_start_date 在 df 中的索引，作为 start_idx
-    start_idx = next((i for i, d in enumerate(dates) if d >= valid_start_date), 0)
+        print(
+            f"\n================ 开始回测第 {ridx + 1} / {total_rounds} 轮 ================\n"
+        )
+        print(
+            f"训练集: {train_start.date()} ➜ {train_end.date()} | "
+            f"测试集: {test_start.date()} ➜ {test_end.date()} | "
+            f"持仓期: {hold_start.date()} ➜ {hold_end.date()}"
+        )
 
-    # 定义每次回测长度（以交易日为单位）
-    train_days = train_years * 252
-    test_days = test_years * 252
-    step_days = step_months * 21
-    hold_days = hold_months * 21
+        # === 2.2 切片数据 ===
+        train_data = df[(df["date"] >= train_start) & (df["date"] <= train_end)]
+        test_data = df[(df["date"] >= test_start) & (df["date"] <= test_end)]
+        hold_data = df[(df["date"] >= hold_start) & (df["date"] <= hold_end)]
 
-    start_idx_cnt, round_cnt = start_idx, 0
-    # 计算一下一共多少轮，方便打印
-    while start_idx_cnt + train_days + test_days + hold_days <= len(dates):
-        start_idx_cnt += step_days
-        round_cnt += 1
-
-    round_num = 1
-    while start_idx + train_days + test_days + hold_days <= len(dates):
-        print(f"\n================ 开始回测第 {round_num} / {round_cnt} 轮 ================\n")
-        # 计算时间范围
-        train_start = dates[start_idx] # 3年
-        train_end = dates[start_idx + train_days - 1]
-        test_start = dates[start_idx + train_days]  # 1年
-        test_end = dates[start_idx + train_days + test_days - 1]
-        hold_start = dates[start_idx + train_days + test_days]
-        hold_end = dates[start_idx + train_days + test_days + hold_days - 1] # 4个月
-
-        train_data = df[(df['date'] >= train_start) & (df['date'] <= train_end)]
-        test_data = df[(df['date'] >= test_start) & (df['date'] <= test_end)]
-        hold_data = df[(df['date'] > test_end) & (df['date'] <= hold_end)]
-
-        # test 和 hold 做限制
-        stock_universe = get_stock_list_for_date(test_start, stock_list_df)  # 从stock_list_df 获取对应日期的股票列表
-        test_data = test_data[test_data[stock_id_col].astype(str).isin(stock_universe)]  # 取交集
+        # === 2.3 股票池过滤 ===
+        stock_universe = get_stock_list_for_date(hold_start, stock_list_df)
+        test_data = test_data[test_data[stock_id_col].astype(str).isin(stock_universe)]
         hold_data = hold_data[hold_data[stock_id_col].astype(str).isin(stock_universe)]
-
-        # 模型训练
+        # 股票池过滤后立即打印股票数量
+        print(f"📊 当前测试集股票数量：{test_data[stock_id_col].nunique()} 只")
+        # === 2.4 特征 & 标签 ===
         X_train = train_data[factor_cols]
         y_train = train_data[label_col]
         print("✅ 本轮训练标签种类：", sorted(y_train.unique()))
-        # ==========更robust的缺失值处理===============
-        inf2nan = FunctionTransformer(
-            func=lambda X: np.where(np.isfinite(X), X, np.nan),
-            validate=False
-        )
 
-        pipeline = Pipeline([
-            ('inf2nan', inf2nan),
-            ('imputer', SimpleImputer(strategy='mean')),
+        # === 2.5 缺失值处理 ===
+        inf2nan = FunctionTransformer(lambda X: np.where(np.isfinite(X), X, np.nan), validate=False)
+        pre_pipe = Pipeline([
+            ("inf2nan", inf2nan),
+            ("imputer", SimpleImputer(strategy="mean")),
         ])
 
-        X_train = pd.DataFrame(
-            pipeline.fit_transform(X_train),
-            columns=X_train.columns,
-            index=X_train.index
-        )
-
+        X_train = pd.DataFrame(pre_pipe.fit_transform(X_train), columns=factor_cols, index=X_train.index)
         test_data_filled = test_data.copy()
         test_data_filled[factor_cols] = pd.DataFrame(
-            pipeline.transform(test_data[factor_cols]),
-            columns=factor_cols,
-            index=test_data.index
-        )
-
-        hold_data_filled = hold_data.copy()
-        hold_data_filled[factor_cols] = pd.DataFrame(
-            pipeline.transform(hold_data[factor_cols]),
-            columns=factor_cols,
-            index=hold_data.index
-        )
-        # 缺失值处理->生成impute
-        X_all_for_impute = X_train.copy()
-        # X_all_for_impute.replace([np.inf, -np.inf], np.nan, inplace=True)
-        print(X_all_for_impute.isna().sum()[lambda x: x > 0])
-        imputer_test = SimpleImputer(strategy='mean')
-        imputer_test.fit(X_all_for_impute)
-        # 缺失值处理->使用impute
-        X_train = pd.DataFrame(imputer_test.transform(X_train), columns=X_train.columns, index=X_train.index)
-        test_data_filled = test_data.copy()
-        test_data_filled[factor_cols] = pd.DataFrame(
-            imputer_test.transform(test_data[factor_cols]),
-            columns=factor_cols,
-            index=test_data.index
+            pre_pipe.transform(test_data[factor_cols]), columns=factor_cols, index=test_data.index
         )
         hold_data_filled = hold_data.copy()
         hold_data_filled[factor_cols] = pd.DataFrame(
-            imputer_test.transform(hold_data[factor_cols]),
-            columns=factor_cols,
-            index=hold_data.index
+            pre_pipe.transform(hold_data[factor_cols]), columns=factor_cols, index=hold_data.index
         )
 
-        # 训练模型
-        model = train_model_with_tscv(X_train, y_train, model_type=params['model_type'])
-        # 选股 + 回测收益
+        # === 2.6 模型训练 ===
+        model = train_model_with_tscv(X_train, y_train, model_type=model_type)
+
+        # === 2.7 选股 + 回测 ===
         avg_return, feat_importance = select_stocks_and_backtest(
             model=model,
             test_data=test_data_filled,
             hold_data=hold_data_filled,
             factor_cols=factor_cols,
             return_col=return_col,
-            imputer=imputer_test,
-            top_k=15,
+            imputer=pre_pipe.named_steps["imputer"],
+            top_k=top_k,
             test_start=test_start,
             test_end=test_end,
-            hold_start=hold_start
+            hold_start=hold_start,
         )
 
         results.append({
-            'test_period_start': test_start,
-            'test_period_end': hold_end,
-            'avg_return': avg_return
+            "test_period_start": test_start,
+            "test_period_end": hold_end,
+            "avg_return": avg_return,
         })
 
         feature_importance_list.append({
-            'date': test_start,
-            **{factor: val for factor, val in zip(factor_cols, feat_importance)}
+            "date": test_start,
+            **{factor: val for factor, val in zip(factor_cols, feat_importance)},
         })
 
-        start_idx += step_days
-        round_num += 1
+        time_cnt = time.time() - start_time
+        # 在每轮开始时
 
+        print(
+            f"开始时间: {datetime.fromtimestamp(start_time).strftime('%H:%M:%S')}, "
+            f"当前时间: {datetime.now().strftime('%H:%M:%S')}, "
+            f"总用时: {format_seconds(time_cnt)}, "
+            f"平均每轮用时: {format_seconds(time_cnt / (ridx + 1))}, "
+            f"预计剩余用时: {format_seconds(time_cnt / (ridx + 1) * (total_rounds - ridx - 1))}"
+        )
+        print(f"📊 当前测试集股票数量：{test_data[stock_id_col].nunique()} 只")
     return pd.DataFrame(results), pd.DataFrame(feature_importance_list)
 
 
@@ -691,21 +656,21 @@ if __name__ == '__main__':
     """
     label_col = 'label'  # 分类标签：高/中/低收益（分类问题）
     return_col = 'ret_fwd_4m'  # 实际未来收益率（连续值，用于回测）
-    stock_id_col = 'stock_id'  # 股票代码 后面rename
+    stock_id_col = 'code'  # 股票代码 后面rename
     cols_input = ['6m_return', '11m_return', '总市值',  # 日度数据
                    'pe', 'pb', 'ps', '现金流比股价',  # 日度季度组合数据
                    '净资产收益率A', '每股收益',  # 季度数据
                    '资本支出比总市值', '流动比率', 'ocfp', 'capex', 'evebit', 'evebitda', '企业价值不含货币资金',
                    '12m_lagged_return', '24m_lagged_return',
-                   'Beta3Y_Cov_y', 'Beta3Y_Reg_y',
+                   'Beta3Y_Cov', 'Beta3Y_Reg',
                    'date', 'code', 'label', 'ret_fwd_4m']
 
     # 2. 读取并准备数据
     # df = pd.read_csv(os.path.join(params['data_dir'], 'merge_data_ret.csv'), encoding='utf-8-sig', usecols=cols_input)
-    df = data_loader.get_daily_price_pd(usecols=cols_input)
+    df = data_loader.get_daily_price_ret_pd(usecols=cols_input)
     df['date'] = pd.to_datetime(df['date'])  # 确保日期列为 datetime 类型
     df.sort_values(['date', 'code'], inplace=True)
-    df.rename(columns={'code': 'stock_id', 'Beta3Y_Cov_y': 'Beta3Y_Cov', 'Beta3Y_Reg_y':'Beta3Y_Reg'}, inplace=True)
+    # df.rename(columns={'code': 'stock_id', 'Beta3Y_Cov_y': 'Beta3Y_Cov', 'Beta3Y_Reg_y':'Beta3Y_Reg'}, inplace=True)
 
     # 读取股票池数据
     # stock_list_df = pd.read_csv(os.path.join(params['data_dir'], './best_stock_window_snapshot.csv'), parse_dates=['date'])
@@ -725,10 +690,10 @@ if __name__ == '__main__':
         return_col=return_col,
         stock_id_col=stock_id_col,
         stock_list_df=stock_list_df,
-        train_years=3,
-        test_years=1,
-        hold_months=4,
-        step_months=1000,  # 测试时改大一点，算的快，基准为4
+        # train_years=3,
+        # test_years=1,
+        # hold_months=4,
+        # step_months=1000,  # 测试时改大一点，算的快，基准为4
     )
 
     # 4. 输出回测结果与因子重要性
@@ -754,3 +719,71 @@ if __name__ == '__main__':
 #     X_clean = pd.DataFrame(imputer.fit_transform(X), columns=X.columns, index=X.index)
 #
 #     return X_clean, imputer
+
+
+# def select_stocks_and_backtest2(model, test_data, hold_data, factor_cols, return_col,
+#                                imputer, top_k=15, test_start=None, test_end=None, hold_start=None):
+#     period_str = f"[test period: {test_start} → {test_end}]"
+#
+#     # 1. 只取测试区间的数据
+#     mask = (test_data['date'] >= test_start) & (test_data['date'] <= test_end)
+#     test_window = test_data.loc[mask]
+#     if test_window.empty:
+#         print(f"{period_str} ⚠️ 在 test_data 中未找到 {test_start} 到 {test_end} 的数据，跳过本轮选股。")
+#         return np.nan, [np.nan] * len(factor_cols)
+#
+#     # 2. 对每个测试日单独预测标签，并收集
+#     preds_list = []
+#     for day, grp in test_window.groupby('date'):
+#         X_day = grp[factor_cols]
+#         X_day = pd.DataFrame(imputer.transform(X_day),
+#                              columns=factor_cols, index=grp.index)
+#         # 这里使用 predict 返回离散标签
+#         y_day_pred = model.predict(X_day)
+#         df_day = pd.DataFrame({
+#             'stock_id': grp['stock_id'].astype(str),
+#             'pred_label': y_day_pred
+#         }, index=grp.index)
+#         preds_list.append(df_day)
+#
+#     all_preds = pd.concat(preds_list)
+#
+#     # 3. 聚合：按 stock_id 取平均预测标签
+#     agg_pred_df = all_preds.groupby('stock_id', as_index=False)['pred_label'].mean()
+#     # 4. 根据平均标签排序，选 top_k
+#     top_stocks = agg_pred_df.sort_values(by='pred_label', ascending=False).head(top_k)
+#     selected_ids = top_stocks['stock_id'].tolist()
+#
+#     # 将选股结果追加保存
+#     output_file = os.path.join(params['result_dir'], f"top_k_stocks_{params['model_type']}.txt")
+#     with open(output_file, "a", encoding="utf-8") as f:
+#         f.write("\n")
+#         f.write(f"{test_start} → {test_end}  🔎 Top-{top_k} 选股（平均预测标签）：\n")
+#         f.write(top_stocks.to_string(index=False))
+#         f.write("\n\n")
+#
+#     # 5. 回测：在 hold_data 中取 hold_start 当日的表现
+#     hold_returns = hold_data[
+#         (hold_data['date'] == hold_start) &
+#         (hold_data['stock_id'].astype(str).isin(selected_ids))
+#         ]
+#
+#     error_prefix = f"error_{str(test_start)[:10].replace('-', '')}"
+#     if hold_returns.empty:
+#         print(f"{period_str} ⚠️ hold_data 中未找到任何选中股票，跳过该期。")
+#         avg_return = np.nan
+#     elif hold_returns[return_col].isnull().all():
+#         print(f"{period_str} ⚠️ 所有选中股票在 hold_data 中 {return_col} 全为空，跳过该期。")
+#         avg_return = np.nan
+#     else:
+#         valid_returns = hold_returns[return_col].dropna()
+#         if len(valid_returns) < 5:
+#             print(f"{period_str} ⚠️ 有效收益样本少于5个（仅 {len(valid_returns)} 支），跳过该期。")
+#             avg_return = np.nan
+#         else:
+#             avg_return = valid_returns.mean()
+#             print(f"{period_str} ✅ 成功回测：平均收益为 {avg_return:.4f}，选股数 {len(valid_returns)}")
+#
+#     # 返回平均收益和原模型的特征重要性（如有）
+#     fi = getattr(model, 'feature_importances_', [np.nan] * len(factor_cols))
+#     return avg_return, fi

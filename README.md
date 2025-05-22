@@ -25,25 +25,24 @@
 ### 运行流程
 
 1. 配置环境，安装对应的包
-2. 运行`zz500_merge.py`
-3. 运行`prepare.py` 
-4. 运行`run.py`
+2. 运行`preprocess.py`的两个函数
+3. 运行`prepare.py`计算因子
+4. 运行`run.py`进行模型训练和回测
 
 ## 代码注释
 
-### `zz500_merge.py`：处理股票列表
+### `preprocess.py`：数据预处理流程
 
-输入：中证500成分股变化数据；输出：每只股票在中证500内的时间范围
+数据预处理函数：
 
-1. 将成分股变化数据转为成分股和时间的对应数据
-2. 生成每个股票在成分股内的时间范围（备注：要求所有交易日均在中证500组合内）
+- `daily_data_2_stock_list()`函数：从日度数据提取成分股，并进行筛选，生成`zz500_list.csv`和`zz500_list_filter.csv`（滑动窗口结果）
+- `preprocess_daily_season_data()`函数：按point-in-time逻辑合并日度数据和季度数据；从akshare下载的财报中获取财报公告日期，将公告日期的下一天作为信息可用日
 
 ### `prepare.py`：股票数据清洗
 
 输入：日度和季度原始数据、每支股票在中证500内的时间范围；输出：因子、符合交易期间长度的日期和股票列表
 
-1. `merge_season_data`：将季度数据所需列和日度数据进行对应，整合进日度数据表中
-2. 数据计算
+2. 计算因子
    1. `calc_ret_label`：计算收益率
       - 计算未来4个月和12个月的收益率，对4个月的收益率打label
    2. `calc_momentum_factor`：计算动量因子和Lagged_return
@@ -51,12 +50,16 @@
       - Lagged_return为过去X日的12个月收益率
    3. `create_factors`：处理其他因子，主要涉及对excel列之间的运算
    4. `calc_beta_3y_factors`：从中证500指数引入市场收益率，计算`beta_cov`和`beta_reg`
-3. 计算符合条件的股票，和日期进行对应
-   1. `calc_period`：结合中证500数据和价格数据，生成每支股票可用日期范围 `filtered_stock_date_range.csv`
-   2. `period2cnt`：计算每日数据可用的股票数量，画图可视化
-   3. `get_date_list`：在`calc_period`结果的基础上，遍历4个月（84d），计算最佳开始日（最大化股票总数量），输出`best_stock_window_snapshot.csv`，为开始日和股票List的匹配结果
 
 备注：缺失值的处理在`run.py`中进行
+
+废弃部分：
+
+- `merge_season_data`：将季度数据所需列和日度数据进行对应，整合进日度数据表中
+- 计算符合条件的股票，和日期进行对应
+  1. `calc_period`：结合中证500数据和价格数据，生成每支股票可用日期范围 `filtered_stock_date_range.csv`
+  2. `period2cnt`：计算每日数据可用的股票数量，画图可视化
+  3. `get_date_list`：在`calc_period`结果的基础上，遍历4个月（84d），计算最佳开始日（最大化股票总数量），输出`best_stock_window_snapshot.csv`，为开始日和股票List的匹配结果
 
 ### ``run.py``：核心部分
 
@@ -106,9 +109,21 @@ def select_stocks_and_backtest(model, X_test, hold_data, return_col, imputer, st
 
 ### 其他文件
 
+- `data_loader.py`：统一数据读入接口（函数调用）；数据格式转换工具（main函数)
 - `read_csv.py`：用来根据列字段（如股票代码或日期）筛选csv中的行，解决csv过大不方便查看的问题
 - `draw.py`：用来画图展示结果
 - `config.py`：用来保存参数，比如文件路径
+
+### 废弃的函数（存档）
+
+#### `zz500_merge.py`：处理股票列表
+
+输入：中证500成分股变化数据；输出：每只股票在中证500内的时间范围
+
+1. 将成分股变化数据转为成分股和时间的对应数据
+2. 生成每个股票在成分股内的时间范围（备注：要求所有交易日均在中证500组合内）
+
+废弃原因：原本是4个月步长，现在直接改为和成分股调整日对齐，逻辑换了
 
 ## 结果展示
 
@@ -150,10 +165,72 @@ def select_stocks_and_backtest(model, X_test, hold_data, return_col, imputer, st
 
 
 
-
-
-
-
-
-
 todo：收益率计算
+
+
+
+
+
+版本说明：0521_unchanged: 可以直接运行
+
+
+
+
+
+season_500_0512:季度数据 [证券代码，日期]（截止日期）
+
+merge_final：处理后的zz500
+
+下面要做的：
+
+1. 从merge_Final导出股票列表（取交集。开始时间-结束时间-测试时间）
+2. 从financial中获取[股票-截止日期-发布日期]三元组，存储到csv
+3. 
+
+
+
+公开日期为Null
+
+```
+C:\Users\linsh\anaconda3\python.exe C:\Users\linsh\Desktop\金融计量\code\src\preprocess.py 
+📊 season_ext 总行数：106751
+🛑 缺失 '公开日期' 的行数：870
+✅ 不缺失 '公开日期' 的行数：105881
+
+🛑 各证券代码缺失条数（仅显示前10个）：
+证券代码
+600155    57
+000627    55
+000712    39
+000750    14
+000563    10
+600369     6
+688561     4
+603728     3
+002831     3
+688301     3
+Name: count, dtype: int64
+
+🧪 缺失公开日期的前几行示例：
+       证券代码         日期 行业代码 indcd1  ... f053104c   f053202b  公告日期  公开日期
+138  000627 2007-03-31  C26    C26  ...      NaN   0.000025   NaT   NaT
+181  000712 2007-03-31  C17    C17  ...      NaN  16.178800   NaT   NaT
+202  000750 2007-03-31  C27    C27  ...      NaN  -0.015925   NaT   NaT
+462  002223 2007-03-31  C35    C35  ...      NaN        NaN   NaT   NaT
+463  002225 2007-03-31  C30    C30  ...      NaN        NaN   NaT   NaT
+
+
+
+```
+
+
+
+
+
+![image-20250522162447893](C:\Users\linsh\AppData\Roaming\Typora\typora-user-images\image-20250522162447893.png)
+
+## 版本记录(不全)
+
+- preprocess.py process_daily_season_data etc. ： 1.merge季度日度和财报公告日数据 2.补全公告日期缺失值
+- calc_example_test_finish: prepare.py中计算因子，在parquet格式下跑通流程
+- backtest_pipeline重写:  backtest_pipeilne更换逻辑，和中证500对齐，修复小BUg，修改markdown，修复daily_data_2_stock_list()csv输出格式

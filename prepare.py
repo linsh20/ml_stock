@@ -35,8 +35,8 @@ def calc_forward_returns(group):
     group['ret_fwd_4m'] = (group['股票价格'].shift(-84) / group['股票价格']) - 1
 
     # ——调试区开始——
-    print(">>> in calc_forward_returns, code =", group['code'].iloc[0])
-    print(group[['date', '股票价格', 'ret_fwd_12m']].tail(3))
+    # print(">>> in calc_forward_returns, code =", group['code'].iloc[0])
+    # print(group[['date', '股票价格', 'ret_fwd_12m']].tail(3))
     # ——调试区结束——
 
 
@@ -49,7 +49,7 @@ def calc_ret_label(df):
 
     # 按股票分组计算未来收益率
     df = df.groupby('code').apply(calc_forward_returns).reset_index(drop=True)
-    print(list(df.columns))
+    # print(list(df.columns))
 
     # 用未来12个月收益率打标签
     df['label'] = df['ret_fwd_12m'].apply(label_return)
@@ -79,7 +79,7 @@ def calc_period():
 
     # 读取数据
     merge_data = pd.read_csv(os.path.join(params['data_dir'], 'merge_data_ret.csv'), parse_dates=['date'])
-    merge_data.rename(columns={'Beta3Y_Cov_y':'Beta3Y_Cov', 'Beta3Y_Reg_y':'Beta3Y_Reg'}, inplace=True)
+    # merge_data.rename(columns={'Beta3Y_Cov_y':'Beta3Y_Cov', 'Beta3Y_Reg_y':'Beta3Y_Reg'}, inplace=True)
     component_periods = pd.read_csv(os.path.join(params['data_dir'], 'component_periods.csv'),
                                     parse_dates=['begin_date', 'end_date'])
     component_periods.rename(columns={'证券代码': 'code'}, inplace=True)
@@ -365,7 +365,7 @@ def calc_beta_3y_factors(df, n_jobs=-1):
 
 def calc_example(): #
     df = data_loader.get_daily_price_pd()
-    df = df[df['code'] == '000006'].copy() # 用于测试
+    # df = df[df['code'] == '000006'].copy() # 用于测试
     print(list(df.columns))
     # df = pd.read_csv(os.path.join(params['data_dir'], 'merge_data.csv'), parse_dates=['日期'])
     # df.rename(columns={'日期': 'date', '证券代码': 'code'}, inplace=True)
