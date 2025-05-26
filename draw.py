@@ -143,6 +143,14 @@ def draw_line_fea():
     plt.show()
 
 
+def draw_combine_with_905():
+    df_res = pd.read_csv('./result/backtest_results_dt.csv', parse_dates=['date'])
+    df_905 = pd.read_csv('/data/905_price.csv', parse_dates=['日期'], use_cols = ['日期', '收盘指数'])
+    for row in df_res:
+
+
+
+
 if __name__ == '__main__':
     # draw_all()
     # label_acc()
