@@ -4,30 +4,37 @@
 
 ```
 项目目录/
-├── data/
-│   ├── 500.csv
-│   └── merge_data.csv
-├── result/
-├── run.py
-├── prepare.py
-├── zz500_merge.py
-├── draw.py
-├── read_csv.py
-├── config.py
-└── README.md
+
 ```
+
+## 准备工作
 
 ### 数据读入
 
-- `merge_data.csv` 日度级别的数据，后面进一步处理
-- `500.csv`成分股变化数据 
+- `.data/raw/merge_final.dta` ：股票日度级别的数据，来源：国泰君安数据库；
+- `./data/raw/season_500_0512.csv`：股票财报数据等季度级别的数据，来源：国泰君安数据库；
+- `./data/500.csv`：成分股变化数据
+- `./data/financial/*_balance.csv`：财报数据，主要为了获取财报发布日期。来源：akshare新浪财报api。
 
 ### 运行流程
 
 1. 配置环境，安装对应的包
-2. 运行`preprocess.py`的两个函数
-3. 运行`prepare.py`计算因子
-4. 运行`run.py`进行模型训练和回测
+2. \*运行`data_loader.py`，把数据转为更高效的parquet格式，方便后续处理
+3. 运行`preprocess.py`的两个函数
+4. 运行`prepare.py`计算因子（耗时较长）
+
+5. 得到`./data/processed/merge_data_ret.parquet`，作为之后模型训练的输入
+
+## 模型训练
+
+### 数据读入
+
+- `./data/processed/merge_data_ret.parquet`，合并了日度、季度，考虑了财报发布时间的准point-in-time数据，也计算了因子。
+- `./data/processed/zz500_list_filter.csv`，对齐中证500成分股调整日的滑动窗口股票列表
+
+### 运行流程
+
+1. 运行`run.py`
 
 ## 代码注释
 
@@ -35,8 +42,11 @@
 
 数据预处理函数：
 
-- `daily_data_2_stock_list()`函数：从日度数据提取成分股，并进行筛选，生成`zz500_list.csv`和`zz500_list_filter.csv`（滑动窗口结果）
+- `daily_data_2_stock_list()`函数：从中证500每日成分股数据`905_daily_fill.csv`，生成阶段数据，并进行筛选，生成`zz500_list.csv`和`zz500_list_filter.csv`（滑动窗口结果）
+
 - `preprocess_daily_season_data()`函数：按point-in-time逻辑合并日度数据和季度数据；从akshare下载的财报中获取财报公告日期，将公告日期的下一天作为信息可用日
+
+废弃：
 
 ### `prepare.py`：股票数据清洗
 
@@ -110,7 +120,7 @@ def select_stocks_and_backtest(model, X_test, hold_data, return_col, imputer, st
 ### 其他文件
 
 - `data_loader.py`：统一数据读入接口（函数调用）；数据格式转换工具（main函数)
-- `read_csv.py`：用来根据列字段（如股票代码或日期）筛选csv中的行，解决csv过大不方便查看的问题
+- `read_csv.py`：用来根据列字段（如股票代码或日期）筛选csv/parquet中的行，导出可以查看的新文件，解决csv/parquet过大不方便查看的问题
 - `draw.py`：用来画图展示结果
 - `config.py`：用来保存参数，比如文件路径
 
@@ -233,4 +243,5 @@ Name: count, dtype: int64
 
 - preprocess.py process_daily_season_data etc. ： 1.merge季度日度和财报公告日数据 2.补全公告日期缺失值
 - calc_example_test_finish: prepare.py中计算因子，在parquet格式下跑通流程
-- backtest_pipeline重写:  backtest_pipeilne更换逻辑，和中证500对齐，修复小BUg，修改markdown，修复daily_data_2_stock_list()csv输出格式
+- backtest_pipeline重写&并集:  backtest_pipeilne更换逻辑，和中证500对齐；滑动窗口从交集改为并集；修复小BUg；修改markdown；修复daily_data_2_stock_list()csv输出格式
+- proprocess change & run change : 修改merge逻辑，保证正确性；修改daily_data_2_stock_list函数，改为从905_daily_fill生成；修改run.py，符合需求；删除多余注释

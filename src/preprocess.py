@@ -10,7 +10,7 @@ def format_code_list(x):
     return ret
 
 
-def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表
+def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表 暂时不用
     """
     处理 merge_final.parquet：
     1. 生成“有成分股变动”的调仓日列表，输出 zz500_list.csv，
@@ -18,6 +18,7 @@ def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表
     2. 基于该列表做 9 期滑动窗口交集，输出 zz500_list_filter.csv。
     """
     # ======== 常量定义 ========
+    file_path = "../data/905_daily_fill.csv"
     PARQUET_PATH = "../data/raw/merge_final.parquet"
     OUT_DIR = "../data/processed"
     FNAME_ALL = "zz500_list.csv"
@@ -29,39 +30,37 @@ def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表
 
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    # -------- 1. 读 parquet 并去重 --------
-    df = pd.read_parquet(PARQUET_PATH, columns=[DATE_COL, CODE_COL])
-    df[DATE_COL] = pd.to_datetime(df[DATE_COL])
-    df = df.drop_duplicates(subset=[DATE_COL, CODE_COL])
+    df = pd.read_csv(file_path, dtype={'证券代码': str}, encoding='utf-8')
+    df['日期'] = pd.to_datetime(df['日期'], errors='coerce')
+    df.dropna(subset=['日期', '证券代码'], inplace=True)
+    df['证券代码'] = df['证券代码'].astype(str)
+    # 按日期聚合，得到每个日期的股票代码集合
+    daily_stocks_map = df.groupby('日期')['证券代码'].apply(set).to_dict()
+    sorted_dates = sorted(daily_stocks_map.keys())
 
-    # -------- 2. 生成每期（所有）成分股列表 --------
-    all_list = (
-        df.groupby(DATE_COL)[CODE_COL]
-        .agg(lambda s: sorted(s.unique()))
-        .reset_index()
-        .rename(columns={DATE_COL: "date", CODE_COL: "code"})
-    )
-    all_list["count"] = all_list["code"].str.len()
+    output_rows = []
+    previous_stocks_set = set()
 
-    # -------- 3. 仅保留“有变动”的调仓日 --------
-    all_list = all_list.sort_values("date").reset_index(drop=True)
-    all_list["changed"] = all_list["code"].ne(all_list["code"].shift())
-    changed_list = all_list.loc[all_list["changed"], ["date", "code", "count"]].reset_index(drop=True)
+    for current_date in sorted_dates:
+        current_stocks_set = daily_stocks_map.get(current_date, set())
 
-    # -------- 4. 计算新增(add) 和 剔除(minus) 列 --------
-    adds, mins = [], []
-    for idx, row in changed_list.iterrows():
-        curr = set(row["code"])
-        if idx == 0:
-            prev = set()
-        else:
-            prev = set(changed_list.at[idx - 1, "code"])
-        adds.append(sorted(curr - prev))
-        mins.append(sorted(prev - curr))
+        added_stocks = current_stocks_set - previous_stocks_set
+        removed_stocks = previous_stocks_set - current_stocks_set
 
-    changed_list["add"] = adds
-    changed_list["minus"] = mins
+        # 要求1: date只保留有变动的日期
+        if added_stocks or removed_stocks:
+            count_val = len(current_stocks_set)
+            output_rows.append({
+                'date': current_date.strftime('%Y-%m-%d'),
+                'code': sorted(list(current_stocks_set)),
+                'count': count_val,
+                'add': sorted(list(added_stocks)),
+                'minus': sorted(list(removed_stocks))
+            })
 
+        previous_stocks_set = current_stocks_set
+
+    changed_list = pd.DataFrame(output_rows)
     # 筛选掉因为停盘退市的中间零星换成分股
     changed_list = changed_list[changed_list["add"].apply(lambda x: len(x) > 2)].reset_index(drop=True)
 
@@ -85,7 +84,7 @@ def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表
         window = cl.iloc[i: i + 9]
         common = set(window.iloc[0]["code"])
         for codes in window["code"].iloc[1:]:
-            common |= set(codes) # Key
+            common |= set(codes) # 取并集
         common = sorted(common)
 
         train_date = window.iloc[0]["date"]
@@ -123,7 +122,7 @@ def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表
 def infer_announcement_date(row):
     if pd.notna(row['公告日期']):
         return row['公告日期']  # 已有公告日期，不补
-    report_date = row['日期']
+    report_date = row['财报观察日期']
     if report_date.month == 12:
         return pd.Timestamp(year=report_date.year + 1, month=6, day=30)
     elif report_date.month == 6:
@@ -161,6 +160,11 @@ def process_daily_season_data(): # 1.merge季度日度和财报公告日数据 2
     # ---------- 0. 统一设置 ----------
     season_path = "../data/raw/season_500_0512.parquet"
     daily_path = "../data/raw/merge_final.parquet"
+
+    # test
+    # season_path = "../data/processed/read_season.parquet"
+    # daily_path = "../data/processed/read_daily.parquet"
+
     fin_glob = "../data/financial/*_balance.csv"  # 扫描全部股票
     out_path = "../data/processed/merge_data.parquet"
 
@@ -181,14 +185,48 @@ def process_daily_season_data(): # 1.merge季度日度和财报公告日数据 2
     season_df = pd.read_parquet(season_path)
     season_df['日期'] = pd.to_datetime(season_df['日期'])
 
+    # 🆕 新增：重命名 season_df 中的 '日期' 列以避免与 daily_df 中的 '日期' 列冲突
+    season_df.rename(columns={'日期': '财报观察日期'}, inplace=True)  # 您可以选择一个更合适的描述性名称
+
+    # ---------- 🔍 merge 前的检查 ----------
+    print("🔍 merge 前检查：")
+    # 更新检查的列名
+    print("season_df['财报观察日期'] 类型：", season_df['财报观察日期'].dtype)
+    print("fin_df['报告日'] 类型：", fin_df['报告日'].dtype)
+
+    if season_df['财报观察日期'].isna().any():  # ✅ 修改为新的列名
+        print("⚠️ season_df 中 '财报观察日期' 存在缺失值！")  # ✅ 修改为新的列名
+    else:
+        # 这条打印语句 "✅ season_df 中 '财报观察日期' 无缺失" 已经从您的输出来看是正确的
+        print("✅ season_df 中 '财报观察日期' 无缺失")  # ✅ 确认这里也使用了新的列名
+
+    if season_df['财报观察日期'].isna().any():
+        print("⚠️ season_df 中 '日期' 存在缺失值！")
+    else:
+        print("✅ season_df 中 '日期' 无缺失")
+
+    if fin_df['报告日'].isna().any():
+        print("⚠️ fin_df 中 '报告日' 存在缺失值！")
+    else:
+        print("✅ fin_df 中 '报告日' 无缺失")
+
+    # 检查两个字段中的唯一值范围
+    print("\n📅 season_df['日期'] 示例（前5个）：", season_df['财报观察日期'].dropna().unique()[:5])
+    print("📅 fin_df['报告日'] 示例（前5个）：", fin_df['报告日'].dropna().unique()[:5])
+
+    # 检查能否成功 inner merge（即有效对齐的数据量）
+    test_merge = season_df.merge(fin_df, left_on=['证券代码', '财报观察日期'], right_on=['证券代码', '报告日'], how='inner')
+    print(f"🔗 inner merge 后匹配成功行数: {len(test_merge)}")
+    ##### 检查完毕
+
     season_ext = (
         season_df
         .merge(fin_df,
-               left_on=['证券代码', '日期'],
+               left_on=['证券代码', '财报观察日期'],  # ⚠️ 使用新的列名
                right_on=['证券代码', '报告日'],
                how='left',
-               validate='1:1',# 一对一匹配，若报错请改成 'm:1'
-               )   # ✅ 控制列名后缀！)
+               validate='1:1',
+               )
         .drop(columns=['报告日'])
     )
 
@@ -224,6 +262,16 @@ def process_daily_season_data(): # 1.merge季度日度和财报公告日数据 2
 
     # ---------- 3. 读取 daily 文件并做分组向前匹配 ----------
     daily_df = pd.read_parquet(daily_path)
+
+    if '证券代码' in daily_df.columns:
+        daily_df['证券代码'] = daily_df['证券代码'].astype(str).str.zfill(6)
+        print(daily_df['证券代码'][0])
+    else:
+        print("⚠️ 警告: '证券代码' 列在 daily_df 中未找到。")
+
+    daily_df['日期'] = pd.to_datetime(daily_df['日期'])
+    season_ext['公开日期'] = pd.to_datetime(season_ext['公开日期'])
+
     daily_df['日期'] = pd.to_datetime(daily_df['日期'])
     season_ext['公开日期'] = pd.to_datetime(season_ext['公开日期'])
 
@@ -241,9 +289,28 @@ def process_daily_season_data(): # 1.merge季度日度和财报公告日数据 2
 
         if grp_season.empty:
             # 如果该代码没有任何财报，直接给这些行补 NaN
+            # 进的这行
             nan_data = {col: pd.NA for col in season_cols}
             out = grp_daily.assign(**nan_data)
         else:
+            if grp_daily.empty:
+                print(f"⚠️ daily_df 中 {code} 没有数据")
+            elif grp_season.empty:
+                print(f"⚠️ season_ext 中 {code} 没有数据")
+            else:
+                max_daily = grp_daily['日期'].max()
+                min_season = grp_season['公开日期'].min()
+                print(f"\n🔎 代码 {code}：")
+                print(f"📅 daily 日期范围：{grp_daily['日期'].min()} ~ {max_daily}")
+                print(f"📅 season 公告公开日范围：{min_season} ~ {grp_season['公开日期'].max()}")
+
+                if max_daily < min_season:
+                    print("🛑 所有日度数据都早于公开日期，merge_asof 将全部匹配失败！")
+                else:
+                    print("✅ 日期范围有交集，merge_asof 应能匹配部分数据")
+
+
+
             out = pd.merge_asof(
                 grp_daily,
                 grp_season,
@@ -259,7 +326,7 @@ def process_daily_season_data(): # 1.merge季度日度和财报公告日数据 2
     merged = pd.concat(out_frames, ignore_index=True)
 
     # ---------- 4. 列重命名 & 导出 ----------
-    merged = merged.rename(columns={'日期': 'date', '证券代码': 'code'})
+    merged.rename(columns={'日期': 'date', '证券代码': 'code'}, inplace = True)
     # 日期格式修正
     for c in ['date',  '公告日期', '公开日期']:
         if c in merged.columns:

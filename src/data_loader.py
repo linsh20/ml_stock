@@ -12,6 +12,8 @@ def get_daily_price_pd(usecols=[]):
     # df = pd.read_csv(os.path.join(params['data_dir'], 'merge_data_ret.csv'), encoding='utf-8-sig', usecols=usecols)
     # if usecols:
     #     df = df[usecols]
+    for col in df.select_dtypes(include=['float64']).columns:
+        df[col] = df[col].astype('float32')
     return df
 
 
@@ -28,7 +30,7 @@ def get_daily_price_ret_pd(usecols=[]):
 
 
 def get_stock_list_pd():
-    df = pd.read_csv('data/best_stock_window_snapshot.csv', parse_dates=['date'])
+    df = pd.read_csv('data/processed/zz500_list_filter.csv', parse_dates=["train_date", "test_date", "buy_date", "end_date"])
     return df
 
 
@@ -94,4 +96,4 @@ if __name__ == '__main__':
     # csv_2_parquet(file_path='../data/raw/merge_final.csv')
     # par_code_2_str(parquet_path='../data/raw/merge_final.parquet', cols=['证券代码'])
     # par_code_2_str(parquet_path='../data/raw/season_500_0512.parquet', cols=['证券代码'])
-    # dta_2_parquet(file_path='../data/raw/merge_final.dta')
+    dta_2_parquet(file_path='../data/raw/merge_final.dta')
