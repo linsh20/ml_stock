@@ -29,11 +29,13 @@ parser = argparse.ArgumentParser(description="Run time series model.")
 parser.add_argument('--model_type', type=str, default='rf', choices=['dt', 'rf', 'xgb'],
                     help="Type of model to use: 'dt' (Decision Tree), 'rf' (Random Forest), 'xgb' (XGBoost)")
 parser.add_argument('--test', action='store_true', help="Whether to run in test mode")
+parser.add_argument('--n_jobs', type=int, default=-1,
+                    help="Number of parallel jobs to run. -1 means using all processors.")
 args = parser.parse_args()
 
 MODEL_TYPE = args.model_type # dt rf xgb
 TEST_FLAG = args.test
-N_JOBS = -1
+N_JOBS = args.n_jobs
 
 LOG_DIR = './logs'
 os.makedirs(LOG_DIR, exist_ok=True)
