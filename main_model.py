@@ -23,12 +23,17 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 import requests
 import src.data_loader as dl
+import argparse
 
+parser = argparse.ArgumentParser(description="Run time series model.")
+parser.add_argument('--model_type', type=str, default='rf', choices=['dt', 'rf', 'xgb'],
+                    help="Type of model to use: 'dt' (Decision Tree), 'rf' (Random Forest), 'xgb' (XGBoost)")
+parser.add_argument('--test', action='store_true', help="Whether to run in test mode")
+args = parser.parse_args()
 
-MODEL_TYPE = 'rf' # dt rf xgb
+MODEL_TYPE = args.model_type # dt rf xgb
+TEST_FLAG = args.test
 N_JOBS = -1
-TEST_FLAG = False
-
 
 LOG_DIR = './logs'
 os.makedirs(LOG_DIR, exist_ok=True)
