@@ -11,9 +11,9 @@ MODEL_TYPE = ''
 TIME_STAMP = ""
 # plt.rcParams['font.family'] = 'Noto Sans CJK SC'
 
-def feature_importance():
+def lag_return():
     # 读取CSV内容
-    data = pd.read_csv(os.path.join(params['result_dir'], f"feature_importance_time_series_{MODEL_TYPE}_{TIME_STAMP}.csv"), parse_dates=['date'])
+    data = pd.read_csv(os.path.join(params['result_dir'], f"lag_return_time_series_{MODEL_TYPE}_{TIME_STAMP}.csv"), parse_dates=['date'])
 
     # 设置日期为索引（可选）
     data.set_index('date', inplace=True)
@@ -29,7 +29,7 @@ def feature_importance():
     plt.grid(True)
     plt.tight_layout()
     plt.xticks(rotation=45)
-    plt.savefig(f'./result/fig/feature_importance_{MODEL_TYPE}_{TIME_STAMP}.png')
+    plt.savefig(f'./result/fig/lag_return_{MODEL_TYPE}_{TIME_STAMP}.png')
     plt.show()
 
 
@@ -291,7 +291,7 @@ def draw_all(model_type:str, time_stamp:str):
     backtest_results()
     plot_cumulative_return()
     label_acc()
-    feature_importance()
+    lag_return()
     draw_box_fea()
     draw_line_fea()
 

@@ -85,9 +85,9 @@ def filter_parquet_by_field_2_parquet(input_path, output_path, column_name, targ
 
 # 使用示例
 input_dir = os.path.join('./data/processed/merge_data_ret.parquet')
-output_csv = os.path.join('data/processed/read_ret.csv')
-field_name = 'code'
-value = ('000005')
+output_csv = os.path.join('./data/read_csv/read_ret.csv')
+field_name = 'date'
+value = ('2024-12-27')
 
 filter_parquet_by_field(input_dir, output_csv, field_name, value)
 # count_and_save_unique_values(input_csv, field_name, os.path.join(params['data_dir'], 'read_csv_unique.csv'))
