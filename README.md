@@ -3,8 +3,42 @@
 ## 文件结构
 
 ```
-项目目录/
-
+文件目录:.
+│  config.py
+│  data.py
+│  draw.py
+│  get_fin_rep.py
+│  prepare.py
+│  README.md
+│  read_csv.py
+│  run.py
+│  因子解释.csv
+├─data
+│  │  905_daily_fill.csv
+│  │  905_price.csv
+│  ├─financial
+│  │  │  000005_balance.csv
+│  │  │  ......
+│  ├─processed
+│  │      merge_data_ret.parquet
+│  │      zz500_list.csv
+│  │      zz500_list_filter.csv
+│  ├─raw
+│  │      merge_final.dta
+│  │      merge_final.parquet
+│  │      season_500_0512.csv
+│  │      season_500_0512.parquet
+│  └─read_csv
+├─debug
+├─result
+│      backtest_results_dt.csv
+│      feature_importance_time_series_dt.csv
+│      label_accuracy.csv
+│      label_accuracy_dt.csv
+│      top_k_stocks_dt.txt
+├─src
+│  │  data_loader.py
+│  │  preprocess.py
 ```
 
 ## 1-数据清洗
@@ -38,15 +72,13 @@
 
 ## 代码注释
 
-### `preprocess.py`：数据预处理流程
+### `src/preprocess.py`：数据预处理流程
 
 数据预处理函数：
 
 - `daily_data_2_stock_list()`函数：从中证500每日成分股数据`905_daily_fill.csv`，生成阶段数据，并进行筛选，生成`zz500_list.csv`和`zz500_list_filter.csv`（滑动窗口结果）
 
 - `preprocess_daily_season_data()`函数：按point-in-time逻辑合并日度数据和季度数据；从akshare下载的财报中获取财报公告日期，将公告日期的下一天作为信息可用日
-
-废弃：
 
 ### `prepare.py`：股票数据清洗
 
@@ -71,7 +103,7 @@
   2. `period2cnt`：计算每日数据可用的股票数量，画图可视化
   3. `get_date_list`：在`calc_period`结果的基础上，遍历4个月（84d），计算最佳开始日（最大化股票总数量），输出`best_stock_window_snapshot.csv`，为开始日和股票List的匹配结果
 
-### ``run.py``：核心部分
+### ``run.py``：模型训练和回测
 
 输入：清洗好的数据；输出：结果
 
@@ -85,8 +117,19 @@
 
 #### 2. 主流程：`back_test_pipeline`函数
 
+（使用多线程加快训练速度，对内部进行进一步封装）
+
 ```python
-def backtest_pipeline(df, factor_cols, label_col, return_col, stock_id_col,  stock_list_df, train_years=3, test_years=1, hold_months=4, step_months=4)
+def backtest_pipeline(
+    df: pd.DataFrame,
+    factor_cols: list,
+    label_col: str,
+    return_col: str,
+    stock_id_col: str,
+    schedule_csv: str = "./data/processed/zz500_list_filter.csv",
+    top_k: int = 15,
+    model_type: str = MODEL_TYPE,
+):
 ```
 
 1. 根据`stock_list_df`找到起始日期；定义回测长度
@@ -107,7 +150,7 @@ def train_model_with_tscv(X_train, y_train, model_type='rf', n_splits=10)
 2. 使用TimeSeries-KFold训练
 3. 返回模型
 
-#### 4. 测试和回测：`select_stocks_and_backtest`函数
+#### 4. 测试和回测：`evaluate_model_with_backtest`函数
 
 ```python
 def select_stocks_and_backtest(model, X_test, hold_data, return_col, imputer, stock_ids, top_k=15, test_start=None, hold_end=None)
@@ -119,9 +162,10 @@ def select_stocks_and_backtest(model, X_test, hold_data, return_col, imputer, st
 
 ### 其他文件
 
-- `data_loader.py`：统一数据读入接口（函数调用）；数据格式转换工具（main函数)
+- `src/data_loader.py`：统一数据读入接口（函数调用）；数据格式转换工具（main函数)
 - `read_csv.py`：用来根据列字段（如股票代码或日期）筛选csv/parquet中的行，导出可以查看的新文件，解决csv/parquet过大不方便查看的问题
-- `draw.py`：用来画图展示结果
+- `draw.py`：画图展示结果
+- `get_fin_rep.py`：使用akshare api下载资产负债表
 - `config.py`：用来保存参数，比如文件路径
 
 ### 废弃的函数（存档）
@@ -135,109 +179,39 @@ def select_stocks_and_backtest(model, X_test, hold_data, return_col, imputer, st
 
 废弃原因：原本是4个月步长，现在直接改为和成分股调整日对齐，逻辑换了
 
-## 结果展示
+## 结果影响因素
 
-### 数据展示
+top-K
+
+k-fold
+
+model-type
+
+random seed
+
+## 可视化展示
+
+### 数据部分
 
 1. 满足条件的股票数量（数据和中证500取交集，要求所有时间都在中证500内）
 
-![image-20250506211754414](C:\Users\linsh\AppData\Roaming\Typora\typora-user-images\image-20250506211754414.png)
+### 训练部分
 
-### 结果展示
+训练时间
 
-#### 只是用两个动量因子的回测结果  ['11m_mom', '6m_mom']
+### 结果部分
 
 1. 累计收益
-   ![image-20250506212258527](C:\Users\linsh\AppData\Roaming\Typora\typora-user-images\image-20250506212258527.png)
+   
+呈现：累计收益（折线图）；与中证500指数对比（折线图）
+   
+   数据：股票购买日 - 股票组合`fwd_6m_return`  - 中证500 `fwd_6m_return`【？】
+   
+2. 每个阶段的收益
 
-2. feature_importance
+   呈现：（条形图）与中证500对比（折线图）
 
-   ![image-20250506214951098](C:\Users\linsh\AppData\Roaming\Typora\typora-user-images\image-20250506214951098.png)
-
-3. 每个阶段的收益（4个月）
-
-   ![image-20250506215335325](C:\Users\linsh\AppData\Roaming\Typora\typora-user-images\image-20250506215335325.png)
-
-字段「证券代码」共有 36 个不同值。（有两段连续4年4个月的）
-
-字段「证券代码」共有 479 个不同值。（有两段的）
-
-流动比例：缺流动资产、净资产，用的总资产
-
-
-
-当前版本修改：
-
-1. 改return的计算逻辑
-2. 检查label计算方法（无误
-3. 改zz500的计算方法：延长4年4个月，取交集
-4. 加入两个beta因子
-
-
-
-todo：收益率计算
-
-
-
-
-
-版本说明：0521_unchanged: 可以直接运行
-
-
-
-
-
-season_500_0512:季度数据 [证券代码，日期]（截止日期）
-
-merge_final：处理后的zz500
-
-下面要做的：
-
-1. 从merge_Final导出股票列表（取交集。开始时间-结束时间-测试时间）
-2. 从financial中获取[股票-截止日期-发布日期]三元组，存储到csv
-3. 
-
-
-
-公开日期为Null
-
-```
-C:\Users\linsh\anaconda3\python.exe C:\Users\linsh\Desktop\金融计量\code\src\preprocess.py 
-📊 season_ext 总行数：106751
-🛑 缺失 '公开日期' 的行数：870
-✅ 不缺失 '公开日期' 的行数：105881
-
-🛑 各证券代码缺失条数（仅显示前10个）：
-证券代码
-600155    57
-000627    55
-000712    39
-000750    14
-000563    10
-600369     6
-688561     4
-603728     3
-002831     3
-688301     3
-Name: count, dtype: int64
-
-🧪 缺失公开日期的前几行示例：
-       证券代码         日期 行业代码 indcd1  ... f053104c   f053202b  公告日期  公开日期
-138  000627 2007-03-31  C26    C26  ...      NaN   0.000025   NaT   NaT
-181  000712 2007-03-31  C17    C17  ...      NaN  16.178800   NaT   NaT
-202  000750 2007-03-31  C27    C27  ...      NaN  -0.015925   NaT   NaT
-462  002223 2007-03-31  C35    C35  ...      NaN        NaN   NaT   NaT
-463  002225 2007-03-31  C30    C30  ...      NaN        NaN   NaT   NaT
-
-
-
-```
-
-
-
-
-
-![image-20250522162447893](C:\Users\linsh\AppData\Roaming\Typora\typora-user-images\image-20250522162447893.png)
+3. feature importance（箱图或折线图）
 
 ## 版本记录(不全)
 

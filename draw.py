@@ -3,9 +3,13 @@ import matplotlib.pyplot as plt
 import os
 from config import params
 
+MODEL_TYPE = ''
+TIME_STAMP = ""
+
+
 def feature_importance():
     # 读取CSV内容
-    data = pd.read_csv(os.path.join(params['result_dir'], f"feature_importance_time_series_{params['model_type']}.csv"), parse_dates=['date'])
+    data = pd.read_csv(os.path.join(params['result_dir'], f"feature_importance_time_series_{MODEL_TYPE}_{TIME_STAMP}.csv"), parse_dates=['date'])
 
     # 设置日期为索引（可选）
     data.set_index('date', inplace=True)
@@ -26,7 +30,7 @@ def feature_importance():
 def backtest_results():
 
     # 读取数据
-    df = pd.read_csv(os.path.join(params['result_dir'], f"backtest_results_{params['model_type']}.csv"), parse_dates=['test_period_start', 'test_period_end'])
+    df = pd.read_csv(os.path.join(params['result_dir'], f"backtest_results_{MODEL_TYPE}_{TIME_STAMP}.csv"), parse_dates=['test_period_start', 'test_period_end'])
 
     # 构造周期标签
     df['period_label'] = df['test_period_start'].dt.strftime('%Y-%m-%d') + ' to ' + df['test_period_end'].dt.strftime(
@@ -51,7 +55,7 @@ def backtest_results():
 
 def label_acc():
     # 读取CSV文件
-    df = pd.read_csv('./result/label_accuracy_dt.csv', parse_dates=['date'])
+    df = pd.read_csv(f'./result/label_accuracy_dt_{MODEL_TYPE}_{TIME_STAMP}', parse_dates=['date'])
 
     # 按时间排序（可选）
     df = df.sort_values(by='date')
@@ -78,7 +82,7 @@ def draw_box_fea():
     plt.rcParams['axes.unicode_minus'] = False
 
     # 读取数据
-    df = pd.read_csv('./result/feature_importance_time_series_dt.csv')
+    df = pd.read_csv(f'./result/feature_importance_time_series_{MODEL_TYPE}_{TIME_STAMP}')
 
     # 删除日期列
     df_nodate = df.drop(columns=['date'])
@@ -99,9 +103,7 @@ def draw_box_fea():
     plt.tight_layout()
     plt.show()
 
-def draw_all():
-    feature_importance()
-    backtest_results()
+
 def draw_line_fea():
     import pandas as pd
     import matplotlib.pyplot as plt
@@ -112,7 +114,7 @@ def draw_line_fea():
     plt.rcParams['axes.unicode_minus'] = False
 
     # 读取数据
-    df = pd.read_csv('./result/feature_importance_time_series_dt.csv', parse_dates=['date'])
+    df = pd.read_csv(f'./result/feature_importance_time_series_{MODEL_TYPE}_{TIME_STAMP}', parse_dates=['date'])
 
     # 去除日期列获取特征名
     feature_names = df.columns.drop('date')
@@ -143,16 +145,23 @@ def draw_line_fea():
     plt.show()
 
 
-def draw_combine_with_905():
-    df_res = pd.read_csv('./result/backtest_results_dt.csv', parse_dates=['date'])
-    df_905 = pd.read_csv('/data/905_price.csv', parse_dates=['日期'], use_cols = ['日期', '收盘指数'])
-    for row in df_res:
+# def draw_combine_with_905():
+#     df_res = pd.read_csv('./result/backtest_results_dt.csv', parse_dates=['date'])
+#     df_905 = pd.read_csv('/data/905_price.csv', parse_dates=['日期'], use_cols = ['日期', '收盘指数'])
+#     for row in df_res:
 
 
+def draw_all(model_type:str, time_stamp:str):
+    global MODEL_TYPE, TIME_STAMP
+    MODEL_TYPE = model_type
+    TIME_STAMP = time_stamp
+    feature_importance()
+    backtest_results()
+    label_acc()
+    draw_box_fea()
+    draw_line_fea()
 
 
 if __name__ == '__main__':
-    # draw_all()
-    # label_acc()
-    # draw_box_fea()
-    draw_line_fea()
+    # 需要修改
+    draw_all(model_type="", time_stamp="")

@@ -26,12 +26,13 @@ def label_return(r): # 打标签
 def calc_forward_returns(group):
     """
     group 是某只股票的时间序列，包含 '日期' 和 '股票价格'
-    添加未来12个月和未来4个月的收益率
+    添加未来12个月 6个月和未来4个月的收益率
     """
     group = group.copy()
     group = group.sort_values('date')
 
     group['ret_fwd_12m'] = (group['股票价格'].shift(-252) / group['股票价格']) - 1
+    group['ret_fwd_6m'] = (group['股票价格'].shift(-126) / group['股票价格']) - 1
     group['ret_fwd_4m'] = (group['股票价格'].shift(-84) / group['股票价格']) - 1
 
     # ——调试区开始——
@@ -371,9 +372,6 @@ def calc_example(): #
     # df.rename(columns={'日期': 'date', '证券代码': 'code'}, inplace=True)
     #
     df = df.dropna(subset=['date'])
-    # df = merge_season_data(df, os.path.join(params['data_dir'], 'season_data.csv'),
-    #                        cols=['EBIT', 'EBITDA'])
-    # print("finish merge season data")
     df = calc_ret_label(df)  # 必须先算
     df = calc_momentum_factor(df)
     print("finish calc momentum factor")
@@ -388,7 +386,17 @@ def calc_example(): #
 
 
 if __name__ == '__main__':
-    calc_example()
+    # calc_example()
+
+    # group = pd.read_parquet('./data/processed/merge_data_ret.parquet')
+    # group = group.copy()
+    # group['ret_fwd_6m'] = ((group['股票价格'].shift(-126) / group['股票价格']) - 1).astype(np.float32)
+    # group.to_parquet('./data/processed/merge_data_ret_1.parquet', index=False, engine='pyarrow')
+
+    group = pd.read_csv("./data/905_price.csv", encoding='utf-8')
+    group = group.copy()
+    group['ret_fwd_6m'] = ((group['收盘指数'].shift(-126) / group['收盘指数']) - 1).astype(np.float32)
+    group.to_csv('./data/905_price_1.csv', index=False, encoding='utf-8-sig')
     # calc_period()
     # period2cnt()
     # get_date_list()
