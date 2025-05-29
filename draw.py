@@ -9,7 +9,7 @@ import numpy as np
 
 MODEL_TYPE = ''
 TIME_STAMP = ""
-plt.rcParams['font.family'] = 'Noto Sans CJK SC'
+# plt.rcParams['font.family'] = 'Noto Sans CJK SC'
 
 def feature_importance():
     # 读取CSV内容
@@ -194,9 +194,9 @@ def draw_box_fea():
     df_sorted.boxplot(rot=90, showmeans=True)
 
     # 添加标题和标签
-    plt.title('各特征的重要性分布箱型图（按平均值排序）')
-    plt.xlabel('特征名称')
-    plt.ylabel('特征重要性')
+    plt.title('Box Plot Of Feature Importance (sorted by mean)')
+    plt.xlabel('Feature Name')
+    plt.ylabel('Feature Importance')
 
     plt.tight_layout()
     plt.savefig(f'./result/fig/feature_boxplot_{MODEL_TYPE}_{TIME_STAMP}.png')
@@ -239,7 +239,7 @@ def draw_line_fea():
         fig.delaxes(axes[j])
 
     # 总标题与布局调整
-    fig.suptitle('各特征的重要性时间折线图', fontsize=16)
+    fig.suptitle('Line Chart: Feature Importance by Time', fontsize=16)
     plt.tight_layout(rect=[0, 0, 1, 0.97])  # 给总标题留出空间
     plt.savefig(f'./result/fig/feature_lineplot_{MODEL_TYPE}_{TIME_STAMP}.png')
     plt.show()
@@ -300,7 +300,7 @@ if __name__ == '__main__':
     # 需要修改
     os.makedirs('./result/fig', exist_ok=True)
     MODEL_TYPE = 'dt'
-    TIME_STAMP = '20250529_201629'
+    TIME_STAMP = '20250529_232245'
     draw_all(model_type=MODEL_TYPE, time_stamp=TIME_STAMP)
     # backtest_results()
     # plot_cumulative_return(0)
