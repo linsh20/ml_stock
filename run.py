@@ -129,6 +129,11 @@ def train_model_with_tscv(X_train, y_train, model_type='dt', n_splits=5, random_
 
 def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
                                  top_k=15, target_label=5): # 选股回测
+    test_end = info_dict["test_end"]
+    hold_end = info_dict["hold_end"]
+    df = df[(df['date'] >= test_end) & (df['date'] <= hold_end)]
+
+
     # 结果写入设置
     period_str = f"[test period: {info_dict['test_start']} → {info_dict['test_end']}]"
 
@@ -432,7 +437,7 @@ def plot_cumulative_return(backtest_df, risk_free_rate=0.0):
 
     # 1) 累计收益曲线
     plt.figure(figsize=(10, 6))
-    plt.plot(df['test_period_start'], df['cum_return'],
+    plt.plot(df['hold_start'], df['cum_return'],
              label='Cumulative Return', marker='o')
     plt.xlabel('Time')
     plt.ylabel('Cumulative Return')
