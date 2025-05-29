@@ -9,7 +9,7 @@ import numpy as np
 
 MODEL_TYPE = ''
 TIME_STAMP = ""
-
+plt.rcParams['font.family'] = 'Noto Sans CJK SC'
 
 def feature_importance():
     # 读取CSV内容
@@ -176,7 +176,7 @@ def label_acc():
 
 def draw_box_fea():
     # 设置中文字体防止乱码
-    plt.rcParams['font.family'] = 'SimHei'
+    # plt.rcParams['font.family'] = 'SimHei'
     plt.rcParams['axes.unicode_minus'] = False
 
     # 读取数据
@@ -209,7 +209,7 @@ def draw_line_fea():
     import math
 
     # 设置中文字体防止乱码
-    plt.rcParams['font.family'] = 'SimHei'
+    # plt.rcParams['font.family'] = 'SimHei'
     plt.rcParams['axes.unicode_minus'] = False
 
     # 读取数据
