@@ -34,6 +34,29 @@ def get_stock_list_pd():
     return df
 
 
+def get_905_price_pd():
+    df = pd.read_csv('data/905_price.csv', parse_dates=["date"], encoding='utf-8-sig',
+                     usecols=["date","code","收盘指数","ret_fwd_6m"])
+    return df
+
+def get_yield(target_date):
+    # 读取已筛选的CSV文件
+    df = pd.read_csv('data/BND_TreasYield_filter.csv', encoding='utf-8-sig', parse_dates='Trddt')
+
+    # 设置你想查询的日期（格式需与CSV中的格式一致，如 "2023-12-31"
+
+    # 筛选出该日期对应的行
+    result = df[df['Trddt'] == target_date]
+
+    # 如果找到了该日期，输出Yield，否则提示未找到
+    if not result.empty:
+        yield_value = result.iloc[0]['Yield']
+        print(f"{target_date} 的利率为: {yield_value}")
+    else:
+        print(f"未找到日期为 {target_date} 的数据")
+
+
+
 def csv_2_parquet(file_path=""):
     print(f"\n当前工作目录: {os.getcwd()}")
     print(f"传入的路径: {file_path}")
@@ -87,6 +110,8 @@ def par_code_2_str(parquet_path="", cols=[""]):
         print(f"✅ 已处理并覆盖保存文件: {parquet_path}")
     except Exception as e:
         print(f"❌ 处理失败: {parquet_path}, 错误信息: {e}")
+
+
 
 
 if __name__ == '__main__':

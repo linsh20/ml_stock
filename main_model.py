@@ -22,6 +22,12 @@ from joblib import Parallel, delayed
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import requests
+import src.data_loader as dl
+
+
+MODEL_TYPE = 'rf' # dt rf xgb
+N_JOBS = -1
+TEST_FLAG = False
 
 
 LOG_DIR = './logs'
@@ -47,8 +53,6 @@ logger.addHandler(fh)
 
 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-MODEL_TYPE = 'dt' # dt rf xgb
-N_JOBS = 4
 
 def format_seconds(seconds): # 打印时间的工具
     hours = int(seconds // 3600)
@@ -57,20 +61,24 @@ def format_seconds(seconds): # 打印时间的工具
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
-def day_2_trading_day(day, trading_day_list_df, logic = 'prev'):
+def day_2_trading_day(day, trading_day_list_df, logic = 'prev', cnt = 1):
+    # prev:向前找还是向后找 cnt: 找第几个
     if logic != 'prev' and logic != 'forw':
         logging.info("day_2_trading_day 参数错误")
         return day
-
-    for i in (0, 10):  # 处理Hold集开始非交易日的情况
-        if day in trading_day_list_df['date']:
+    # day_src = day
+    for i in range(0, 15):  # 处理Hold集开始非交易日的情况 少了一个range!!!
+        if (trading_day_list_df['date'] == day).any(): # 不能用in
+            cnt -= 1
+        if cnt == 0:
             break
         if logic == 'prev':
             day -= pd.Timedelta(days=1)
         else:
             day += pd.Timedelta(days=1)
-    if not day in trading_day_list_df['date']:
+    if not day in trading_day_list_df['date'] or cnt != 0:
         logging.info("day_2_trading_day 数据错误")
+    # print("day2trading day", day_src ,"->>", day, "cnt= ", cnt )
     return day
 
 
@@ -151,6 +159,7 @@ def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
     y_pred = model.predict_proba(X_test)[:, label_index]
 
     ########### 存储预测准确率（新增） TODO 整合回测输出，把数值和计算全部拆到后面一个单独的part 结果展示 量化框架
+    accuracy=-1
     if 'label' in test_day_data.columns:
         y_true = test_day_data['label'].values
         y_pred_labels = model.predict(X_test)
@@ -212,7 +221,7 @@ def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
             avg_return = valid_returns.mean()
             logger.info(f"{period_str} ✅ 成功回测：平均收益为 {avg_return:.4f}，选股数 {len(valid_returns)}")
 
-    return avg_return, model.feature_importances_
+    return avg_return, accuracy, model.feature_importances_
 
 
 def run_single_backtest(
@@ -235,26 +244,28 @@ def run_single_backtest(
     test_start = row["test_date"]
     hold_start = row["buy_date"]
     hold_end = row["end_date"]
-    train_end = test_start - pd.Timedelta(days=1)
-    test_end = hold_start - pd.Timedelta(days=1)
+    train_end = test_start
+    test_end = hold_start
 
     # 转为交易日
     train_start = day_2_trading_day(train_start, df, 'forw')
     train_end = day_2_trading_day(train_end, df, 'forw')
+    train_end = day_2_trading_day(train_end, df, 'prev', cnt=2)
     test_start = day_2_trading_day(test_start, df, 'forw')
     test_end = day_2_trading_day(test_end, df, 'forw')
+    test_end = day_2_trading_day(test_end, df, 'prev', cnt=2)
     hold_start = day_2_trading_day(hold_start, df, 'forw')
     hold_end = day_2_trading_day(hold_end, df, 'forw')
 
     # 数据不足时跳过
     if hold_end > df["date"].max():
-        print(
+        logger.info(
             f"⚠️ 数据不足，跳过第 {ridx + 1} 轮（hold_end={hold_end.date()} 超出数据范围）"
         )
         return None
 
     logger.info(f"\n========== 回测第 {ridx + 1} / {total_rounds} 轮 ==========")
-    print(
+    logger.info(
         f"训练集: {train_start.date()} ➜ {train_end.date()} | "
         f"测试集: {test_start.date()} ➜ {test_end.date()} | "
         f"持仓期: {hold_start.date()} ➜ {hold_end.date()}"
@@ -266,25 +277,11 @@ def run_single_backtest(
     df = df[df[stock_id_col].isin(stock_universe)]
     logger.info(f"📊 本轮测试集股票数量：{df[stock_id_col].nunique()} 只")
 
-    # 因子列缺失值用mean填补
-    inf2nan = FunctionTransformer(
-        lambda X: np.where(np.isfinite(X), X, np.nan), validate=False
-    )
-    pre_pipe = Pipeline(
-        [
-            ("inf2nan", inf2nan),
-            ("imputer", SimpleImputer(strategy="mean")),
-        ]
-    )
-    df[factor_cols] = pd.DataFrame(  # 节省内存，不再copy
-        pre_pipe.fit_transform(df[factor_cols]), columns=factor_cols, index=df.index
-    )
-
     # 切片数据： 提取X_train, Y_train 切片数据
     train_data = df[(df["date"] >= train_start) & (df["date"] <= train_end)] # 潜复制
     X_train = train_data[factor_cols]
     y_train = train_data[label_col]
-    logger.info("✅ 本轮训练标签种类：", sorted(y_train.unique()))
+    logger.info("✅ 本轮训练标签种类：%s", sorted(y_train.unique()))
 
     ##########      3. 模型训练     ##########
     model = train_model_with_tscv(X_train, y_train, model_type=model_type)
@@ -298,7 +295,7 @@ def run_single_backtest(
         'hold_start': hold_start,
         'hold_end': hold_end,
     }
-    avg_return, feat_importance = evaluate_model_with_backtest(
+    avg_return, accuracy, feat_importance = evaluate_model_with_backtest(
         model=model,
         info_dict = info_dict,
         df = df,
@@ -315,6 +312,7 @@ def run_single_backtest(
             "hold_start": hold_start,
             "hold_end": hold_end,
             "avg_return": avg_return,
+            "accuracy": accuracy,
         },
         "importance": {
             "date": test_start,
@@ -333,7 +331,7 @@ def backtest_pipeline(
     top_k: int = 15,
     model_type: str = MODEL_TYPE,
 ):
-    """
+    """f
     基于中证 500 调仓节奏的回测框架——并行版（使用 joblib 多线程）。
     """
     # 1. 载入调仓日表并排序
@@ -353,8 +351,22 @@ def backtest_pipeline(
     start_time = time.time()
 
     # 测试模式：仅跑前 N 轮 TODO
-    TEST_FLAG = True
     max_round = 3 if TEST_FLAG else total_rounds
+
+    # 缺失值填补
+    # 因子列缺失值用mean填补
+    inf2nan = FunctionTransformer(
+        lambda X: np.where(np.isfinite(X), X, np.nan), validate=False
+    )
+    pre_pipe = Pipeline(
+        [
+            ("inf2nan", inf2nan),
+            ("imputer", SimpleImputer(strategy="mean")),
+        ]
+    )
+    df[factor_cols] = pd.DataFrame(  # 节省内存，不再copy
+        pre_pipe.fit_transform(df[factor_cols]), columns=factor_cols, index=df.index
+    )
 
     # 并行执行每轮回测
     results_all = Parallel(n_jobs=N_JOBS)(
@@ -385,102 +397,39 @@ def backtest_pipeline(
     return pd.DataFrame(results), pd.DataFrame(feature_importance_list)
 
 
-def compute_performance_metrics(backtest_df, risk_free_rate=0.0):
-    backtest_df = backtest_df.copy()
-    returns = backtest_df['avg_return'].dropna()
-
-    if returns.empty or len(returns) < 2:
-        return {
-            'Annualized Return': np.nan,
-            'Volatility': np.nan,
-            'Sharpe Ratio': np.nan,
-            'Max Drawdown': np.nan
-        }
-
-    # 计算两个 rebalancing 日期之间的天数
-    period_len = (backtest_df['hold_start'].iloc[1] - backtest_df['hold_start'].iloc[0]).days
-    annual_factor = 252 / period_len if period_len > 0 else 1
-
-    annualized_return = (1 + returns.mean()) ** annual_factor - 1
-    annualized_volatility = returns.std() * np.sqrt(annual_factor)
-    sharpe_ratio = (annualized_return - risk_free_rate) / annualized_volatility if annualized_volatility != 0 else np.nan
-
-    cum_returns = (1 + returns).cumprod()
-    peak = cum_returns.cummax()
-    drawdown = (cum_returns - peak) / peak
-    max_drawdown = drawdown.min()
-
-    return {
-        'Annualized Return': annualized_return,
-        'Volatility': annualized_volatility,
-        'Sharpe Ratio': sharpe_ratio,
-        'Max Drawdown': max_drawdown
-    }
-
-
-# 累计收益
-def plot_cumulative_return(backtest_df, risk_free_rate=0.0):
-    """
-    绘制累计收益曲线，并以文本框形式展示总体绩效指标：
-      - 年化收益 (Annualized Return)
-      - 年化波动率 (Volatility)
-      - 夏普比率 (Sharpe Ratio)
-      - 最大回撤 (Max Drawdown)
-    backtest_df 要包含 ['test_period_start', 'avg_return'] 两列。
-    """
-    # 复制数据，计算累计收益
-    df = backtest_df.copy()
-    df['cum_return'] = (1 + df['avg_return']).cumprod()
-
-    # 计算总体绩效指标
-    metrics = compute_performance_metrics(df, risk_free_rate)
-
-    # 1) 累计收益曲线
-    plt.figure(figsize=(10, 6))
-    plt.plot(df['hold_start'], df['cum_return'],
-             label='Cumulative Return', marker='o')
-    plt.xlabel('Time')
-    plt.ylabel('Cumulative Return')
-    plt.title('Cumulative Return Over Time')
-    plt.grid(True)
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.legend()
-    plt.show()
-
-    # 2) 文本框展示总体绩效指标
-    textstr = '\n'.join([
-        f"Annualized Return: {metrics['Annualized Return']:.2%}",
-        f"Volatility:         {metrics['Volatility']:.2%}",
-        f"Sharpe Ratio:       {metrics['Sharpe Ratio']:.2f}",
-        f"Max Drawdown:       {metrics['Max Drawdown']:.2%}"
-    ])
-
-    plt.figure(figsize=(6, 3))
-    plt.axis('off')  # 不显示坐标轴
-    # 在图中添加文本
-    plt.text(0.01, 0.5, textstr, fontsize=12, va='center')
-    plt.title('Performance Metrics')
-    plt.tight_layout()
-    plt.show()
-
-
 if __name__ == '__main__':
     os.makedirs('./debug', exist_ok=True)
     os.makedirs('./result', exist_ok=True)
+    os.makedirs('./result/fig', exist_ok=True)
     os.makedirs('./data/processed', exist_ok=True)
 
     # 下载数据集
-    file_id, dest = '1pULLUf_W9KKtgrZSIYMjGVqb7BeizwZM', './data/processed/merge_data_ret.parquet'
-    os.path.exists(dest) or open(dest, 'wb').write(
-        requests.get(f'https://drive.google.com/uc?export=download&id={file_id}', stream=True).content)
+    file_id = '1pULLUf_W9KKtgrZSIYMjGVqb7BeizwZM'
+    dest = './data/processed/merge_data_ret.parquet'
+
+    if not os.path.exists(dest):
+        url = f'https://drive.google.com/uc?export=download&id={file_id}'
+        response = requests.get(url, stream=True)
+        total = int(response.headers.get('content-length', 0))
+
+        with open(dest, 'wb') as f, tqdm(
+                desc="Downloading",
+                total=total,
+                unit='B',
+                unit_scale=True,
+                unit_divisor=1024
+        ) as bar:
+            for chunk in response.iter_content(chunk_size=1024):
+                if chunk:
+                    f.write(chunk)
+                    bar.update(len(chunk))
 
 
     # 1.定义列名
     factor_cols = ['6m_return', '11m_return',
                    '总市值',  # 日度数据
                    'pe', 'pb', 'ps', '现金流比股价',  # 日度季度组合数据
-                   '净资产收益率A', '每股收益',  # 季度数据
+                   '净资产收益率A', '每股收益',  # 季度数据l
                    '资本支出比总市值', '流动比率', 'ocfp', 'capex', 'evebit', 'evebitda', '企业价值不含货币资金',
                    '12m_lagged_return', '24m_lagged_return',
                    'Beta3Y_Cov', 'Beta3Y_Reg']
@@ -488,7 +437,7 @@ if __name__ == '__main__':
         资本支出 / 总市值
         流动比率： 流动资产（缺）/流动负债（有）
         ocfp: 经营活动现金流量净额(有）/ 净资产（无？）
-        capex: 资本支出/营业收入（都有）
+        capex: 资本支出/营业收入（都有）zz
         evebit: 企业价值（用哪个？）/ EBIT(季度）
         evebitda: 企业价值（用哪个？）/ EBITDA(季度）
         两个lag，两个回归
@@ -537,8 +486,6 @@ if __name__ == '__main__':
                       index=False)
 
     # 5. 可视化收益曲线
-    plot_cumulative_return(backtest_df)
-    logger.info("plot finish")
     draw.draw_all(model_type = MODEL_TYPE, time_stamp = ts)
     logger.info("回测完成，结果已保存！")
 
