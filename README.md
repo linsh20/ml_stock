@@ -52,7 +52,7 @@
 
 ### 步骤
 
-1. 配置环境，安装对应的包
+1. 配置环境，安装对应的包 `pip install -r requirements.txt` (python版本3.11)
 2. \*运行`data_loader.py`，把数据转为更高效的parquet格式，方便后续处理
 3. 运行`preprocess.py`的两个函数，数据对齐
 4. 运行`prepare.py`计算因子（耗时较长）
@@ -67,7 +67,7 @@
 - `./data/FBND_TreasYield_filter.csv`，半年期无风险利率
 
 ### 运行流程
-
+`pip install -r requirements.txt`
 6. 运行`main_model.py`，训练完成后也会自动调用`draw.py`画图（也可以自行单独调用）
 ```angular2html
 参数说明：

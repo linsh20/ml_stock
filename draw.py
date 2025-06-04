@@ -1,27 +1,44 @@
-import pandas as pd
-import matplotlib.pyplot as plt
 import os
-from config import params
+
+import matplotlib.pyplot as plt
+import pandas as pd
+from adjustText import adjust_text
+
 import src.data_loader as dl
-import main_model
-import numpy as np
+from config import params
+
+# import math # math import is done inside draw_line_fea as per original
 
 
 MODEL_TYPE = ''
 TIME_STAMP = ""
 # plt.rcParams['font.family'] = 'Noto Sans CJK SC'
 
+# --- New color definitions for beautification ---
+COLOR_BLUE = '#1f77b4'  # Matplotlib default blue
+COLOR_ORANGE = '#ff7f0e'  # Matplotlib default orange
+COLOR_GREEN = '#2ca02c'  # Matplotlib default green
+COLOR_RED = '#d62728'  # Matplotlib default red
+COLOR_PURPLE = '#9467bd'  # Matplotlib default purple
+COLOR_GREY = '#7f7f7f'  # Matplotlib default grey
+COLOR_TEAL = '#17becf'  # Matplotlib default teal
+COLOR_LIGHT_BLUE_BOX = '#aec7e8'  # Lighter blue for boxplot fill
+
+
+# --- End of new color definitions ---
+
 def lag_return():
     # 读取CSV内容
-    data = pd.read_csv(os.path.join(params['result_dir'], f"lag_return_time_series_{MODEL_TYPE}_{TIME_STAMP}.csv"), parse_dates=['date'])
+    data = pd.read_csv(os.path.join(params['result_dir'], f"lag_return_time_series_{MODEL_TYPE}_{TIME_STAMP}.csv"),
+                       parse_dates=['date'])
 
     # 设置日期为索引（可选）
     data.set_index('date', inplace=True)
 
     # 绘图
     plt.figure(figsize=(12, 6))
-    plt.plot(data.index, data['6m_return'], marker='o', label='6m Return')
-    plt.plot(data.index, data['11m_return'], marker='s', label='11m Return')
+    plt.plot(data.index, data['6m_return'], marker='o', label='6m Return', color=COLOR_BLUE, linestyle='-')
+    plt.plot(data.index, data['11m_return'], marker='s', label='11m Return', color=COLOR_ORANGE, linestyle='--')
     plt.title('6-Month vs 11-Month Return Over Time')
     plt.xlabel('Date')
     plt.ylabel('Return')
@@ -45,28 +62,39 @@ def backtest_results():
     df = df.merge(market_df, on='hold_start', how='left')
 
     # 构造周期标签
-    df['period_label'] = df['hold_start'].dt.strftime('%Y-%m-%d') + ' to ' + df['hold_end'].dt.strftime('%Y-%m-%d')
+    df['period_label'] = df['hold_start'].dt.strftime('%y-%m') + ' -> ' + df['hold_end'].dt.strftime('%y-%m')
 
     # 绘图：共用一个坐标轴
-    fig, ax = plt.subplots(figsize=(14, 6))
+    fig, ax = plt.subplots(figsize=(14, 7))  # 稍微增加图形高度以便有更多空间
 
     # 柱状图：模型平均收益
     bars = ax.bar(df['period_label'], df['avg_return'],
-                  color=['green' if x >= 0 else 'red' for x in df['avg_return']],
-                  label='Model Avg Return')
+                  color=[COLOR_GREEN if x >= 0 else COLOR_RED for x in df['avg_return']],
+                  label='Model Avg Return',
+                  zorder=2)  # 设置zorder确保柱状图在特定层
 
     # 折线图：市场参考收益
-    ax.plot(df['period_label'], df['ret_fwd_6m'], color='blue', marker='o', label='Market 6M Return')
+    ax.plot(df['period_label'], df['ret_fwd_6m'], color=COLOR_TEAL, marker='o',
+            label='Market 6M Return', zorder=3)  # 设置zorder
 
     # 添加柱状图标签
+    bar_label_fontsize = 7.5  # 稍微调整字号
     for bar in bars:
         yval = bar.get_height()
         ax.text(bar.get_x() + bar.get_width() / 2, yval,
-                f'{yval:.2%}', ha='center', va='bottom' if yval >= 0 else 'top', fontsize=8)
+                f'{yval:.2%}', ha='center', va='bottom' if yval >= 0 else 'top',
+                fontsize=bar_label_fontsize, zorder=4)
 
     # 添加折线图标签
+    line_label_fontsize = 7.5  # 稍微调整字号
+    line_texts = []  # 用于收集文本对象给 adjustText
     for i, yval in enumerate(df['ret_fwd_6m']):
-        ax.text(i, yval, f'{yval:.2%}', ha='center', va='bottom' if yval >= 0 else 'top', fontsize=8, color='blue')
+        if pd.notnull(yval):  # 仅为非NaN值添加文本
+            # 文本颜色与折线颜色一致
+            txt = ax.text(i, yval, f'{yval:.2%}', ha='center',
+                          # va 参数由 adjustText 处理会更好
+                          fontsize=line_label_fontsize, color=COLOR_TEAL, zorder=5)
+            line_texts.append(txt)
 
     # 坐标轴设置
     ax.set_ylabel('Return')
@@ -74,10 +102,25 @@ def backtest_results():
     ax.set_xticklabels(df['period_label'], rotation=90)
     ax.grid(axis='y', linestyle='--', alpha=0.7)
     ax.set_title('Average Return per Test Period with Market 6M Return')
+    ax.axhline(0, color='black', lw=0.5, linestyle='--')  # 添加一条 y=0 的参考线
 
     # 图例
     ax.legend(loc='upper left')
+
+    # 首先应用 tight_layout 调整整体布局
     plt.tight_layout()
+
+    # 然后使用 adjustText 调整折线图标签以避免重叠
+    if line_texts:  # 仅当有文本时调用
+        adjust_text(line_texts,
+                    # ax=ax, # 通常 adjustText 可以自动找到轴
+                    # expand_points=(1.2, 1.2), # 稍微增加点周围的空间
+                    # expand_text=(1.2, 1.2),   # 稍微增加文本间的空间
+                    # force_points=0.2,         # 将文本推离点的力度
+                    # force_text=0.3,           # 文本间互相推离的力度
+                    arrowprops=dict(arrowstyle="-", color='gray', lw=0.5, alpha=0.6)  # 给标签添加指引线
+                    )
+
     plt.savefig(f'./result/fig/backtest_results_{MODEL_TYPE}_{TIME_STAMP}.png')
     plt.show()
 
@@ -89,7 +132,7 @@ def backtest_results():
 
     # 柱状图：超额收益
     bars2 = ax2.bar(df['period_label'], df['excess_return'],
-                    color=['green' if x >= 0 else 'red' for x in df['excess_return']],
+                    color=[COLOR_GREEN if x >= 0 else COLOR_RED for x in df['excess_return']],  # Updated colors
                     label='Excess Return')
 
     # 添加柱状图标签
@@ -120,7 +163,7 @@ def plot_cumulative_return(risk_free_rate=0.0):
     df['cum_return'] = (1 + df['avg_return']).cumprod()
 
     # 构造字符串横轴标签
-    df['period_label'] = df['hold_start'].dt.strftime('%Y-%m-%d') + ' to ' + df['hold_end'].dt.strftime('%Y-%m-%d')
+    df['period_label'] = df['hold_start'].dt.strftime('%y-%m') + ' -> ' + df['hold_end'].dt.strftime('%y-%m')
 
     # 指数累计收益
     market_df = dl.get_905_price_pd()[['date', '收盘指数', 'ret_fwd_6m']].rename(columns={'date': 'hold_start'})
@@ -133,7 +176,8 @@ def plot_cumulative_return(risk_free_rate=0.0):
     merged['index_cum_return'] = merged['r'] / market_base
 
     # 计算模型绩效
-    metrics = compute_performance_metrics(df, risk_free_rate)
+    metrics = compute_performance_metrics(df,
+                                          risk_free_rate)  # df here refers to the one from backtest_results.csv for model returns
 
     # 绘图
     plt.figure(figsize=(14, 6))
@@ -141,13 +185,14 @@ def plot_cumulative_return(risk_free_rate=0.0):
     model_y = merged['cum_return']
     index_y = merged['index_cum_return']
 
-    plt.plot(x_labels, model_y, label='Model Cumulative Return', marker='o')
+    plt.plot(x_labels, model_y, label='Model Cumulative Return', marker='o', color=COLOR_BLUE)  # Updated color
     for i, val in enumerate(model_y):
-        plt.text(i, val, f'{val:.2f}', ha='center', va='bottom', fontsize=10)
+        plt.text(i, val, f'{val:.2f}', ha='center', va='bottom', fontsize=10)  # Original fontsize
 
-    plt.plot(x_labels, index_y, label='Market Cumulative Return (905)', marker='s', linestyle='--', color='gray')
+    plt.plot(x_labels, index_y, label='Market Cumulative Return (905)', marker='s', linestyle='--',
+             color=COLOR_GREY)  # Updated color
     for i, val in enumerate(index_y):
-        plt.text(i, val, f'{val:.2f}', ha='center', va='top', fontsize=10, color='gray')
+        plt.text(i, val, f'{val:.2f}', ha='center', va='top', fontsize=10, color='gray')  # Original fontsize and color
 
     plt.xlabel('Period')
     plt.ylabel('Cumulative Return')
@@ -168,13 +213,11 @@ def plot_cumulative_return(risk_free_rate=0.0):
     ])
     plt.figure(figsize=(6, 3))
     plt.axis('off')
-    plt.text(0.01, 0.5, textstr, fontsize=20, va='center')
+    plt.text(0.01, 0.5, textstr, fontsize=20, va='center')  # Original fontsize
     plt.title('Model Performance Metrics')
     plt.tight_layout()
     plt.savefig(f'./result/fig/performance_metrics_{MODEL_TYPE}_{TIME_STAMP}.png')
     plt.show()
-
-
 
 
 def label_acc():
@@ -183,12 +226,12 @@ def label_acc():
     df = pd.read_csv(os.path.join(params['result_dir'], f"backtest_results_{MODEL_TYPE}_{TIME_STAMP}.csv"),
                      parse_dates=['hold_start', 'hold_end'])
     # 按时间排序（可选）
-    df.rename(columns={'hold_start':'date'}, inplace=True)
+    df.rename(columns={'hold_start': 'date'}, inplace=True)
     df = df.sort_values(by='date')
 
     # 绘制折线图
     plt.figure(figsize=(10, 6))
-    plt.plot(df['date'], df['accuracy'], marker='o', linestyle='-')
+    plt.plot(df['date'], df['accuracy'], marker='o', linestyle='-', color=COLOR_GREEN)  # Updated color
 
     # 设置图形标题和坐标轴标签
     plt.title('Accuracy Over Time')
@@ -220,22 +263,38 @@ def draw_box_fea():
 
     # 绘图
     plt.figure(figsize=(14, 8))
-    df_sorted.boxplot(rot=90, showmeans=True)
+    # df_sorted.boxplot(rot=90, showmeans=True) # Original call
+    bp = df_sorted.boxplot(rot=90, showmeans=True, patch_artist=True,  # Added patch_artist for coloring
+                           return_type='dict',  # <--- 添加这一行
+                           meanprops={'marker': 'D', 'markeredgecolor': 'black',
+                                      'markerfacecolor': COLOR_RED},
+                           medianprops={'color': COLOR_ORANGE, 'linewidth': 1.5},
+                           flierprops={'marker': '.', 'markerfacecolor': COLOR_GREY, 'markeredgecolor': COLOR_GREY,
+                                       'alpha': 0.5})
+
+    for box in bp['boxes']:
+        box.set_facecolor(COLOR_LIGHT_BLUE_BOX)  # Set box face color
+        box.set_edgecolor(COLOR_BLUE)  # Set box edge color
+    for whisker in bp['whiskers']:
+        whisker.set_color(COLOR_BLUE)
+        whisker.set_linestyle('--')
+    for cap in bp['caps']:
+        cap.set_color(COLOR_BLUE)
 
     # 添加标题和标签
     plt.title('Box Plot Of Feature Importance (sorted by mean)')
     plt.xlabel('Feature Name')
     plt.ylabel('Feature Importance')
+    plt.grid(axis='y', linestyle='--', alpha=0.6)  # Added a subtle grid for y-axis
 
     plt.tight_layout()
     plt.savefig(f'./result/fig/feature_boxplot_{MODEL_TYPE}_{TIME_STAMP}.png')
     plt.show()
 
-
 def draw_line_fea():
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    import math
+    import pandas as pd  # Original import location
+    import matplotlib.pyplot as plt  # Original import location
+    import math  # Original import location
 
     # 设置中文字体防止乱码
     # plt.rcParams['font.family'] = 'SimHei'
@@ -247,7 +306,7 @@ def draw_line_fea():
     # 去除日期列获取特征名
     feature_names = df.columns.drop('date')
 
-    # 准备子图参数
+    # prepare subplot parameters
     n_features = len(feature_names)
     n_cols = 5  # 每行放5个子图
     n_rows = math.ceil(n_features / n_cols)
@@ -259,9 +318,11 @@ def draw_line_fea():
     # 逐个特征画图
     for i, feature in enumerate(feature_names):
         ax = axes[i]
-        ax.plot(df['date'], df[feature], marker='o', linewidth=1)
+        ax.plot(df['date'], df[feature], marker='.', linewidth=1.5,
+                color=COLOR_BLUE)  # Updated color, marker, linewidth
         ax.set_title(feature)
         ax.tick_params(axis='x', rotation=45)
+        ax.grid(True, linestyle=':', alpha=0.5)  # Added subtle grid to subplots
 
     # 删除多余的子图
     for j in range(i + 1, len(axes)):
@@ -275,8 +336,8 @@ def draw_line_fea():
 
 
 def compute_performance_metrics(backtest_df, risk_free_rate='data/BND_TreasYield_filter.csv'):
-    import pandas as pd
-    import numpy as np
+    import pandas as pd  # Original import location
+    import numpy as np  # Original import location
 
     backtest_df = backtest_df.copy()
     backtest_df['hold_start'] = pd.to_datetime(backtest_df['hold_start'])
@@ -296,12 +357,21 @@ def compute_performance_metrics(backtest_df, risk_free_rate='data/BND_TreasYield
     backtest_df = backtest_df.dropna(subset=['avg_return', 'rf'])
 
     if len(backtest_df) < 2:
-        return {
+        # Simplified return for less than 2 periods, closer to original implication
+        # Original didn't explicitly handle this edge case for all metrics, but this is a minimal safe handling
+        _nan_metrics = {
             'Annualized Return': np.nan,
             'Volatility': np.nan,
             'Sharpe Ratio': np.nan,
             'Max Drawdown': np.nan
         }
+        if len(backtest_df) == 1:  # if there's one return, max drawdown is just that return if negative
+            ret = backtest_df['avg_return'].iloc[0]
+            _nan_metrics['Max Drawdown'] = min(0, ret)
+            _nan_metrics['Cumulative Return'] = (1 + ret)  # Original didn't have this key but it's computed below
+        else:  # len is 0
+            _nan_metrics['Cumulative Return'] = np.nan
+        return _nan_metrics
 
     returns = backtest_df['avg_return'].values
     rfs = backtest_df['rf'].values
@@ -312,11 +382,11 @@ def compute_performance_metrics(backtest_df, risk_free_rate='data/BND_TreasYield
     cumulative_return = np.prod(1 + returns)
     annualized_return = cumulative_return ** (1 / T) - 1
 
-    volatility = np.std(returns)
+    volatility = np.std(returns)  # This is periodic volatility
     annualized_volatility = volatility * np.sqrt(m)
 
     excess_return = returns - rfs
-    annualized_excess_return = np.mean(excess_return) * m
+    annualized_excess_return = np.mean(excess_return) * m  # As per original logic
     sharpe_ratio = annualized_excess_return / annualized_volatility if annualized_volatility > 0 else np.nan
 
     cum_returns = np.cumprod(1 + returns)
@@ -330,26 +400,73 @@ def compute_performance_metrics(backtest_df, risk_free_rate='data/BND_TreasYield
         'Sharpe Ratio': sharpe_ratio,
         'Max Drawdown': max_drawdown,
         'Cumulative Return': cumulative_return
+        # Added this key to match previous good version, was implicitly calculated
     }
 
 
-def draw_all(model_type:str, time_stamp:str):
+def compare_top_k():
+    ts=TIME_STAMP
+
+    output_file = os.path.join(f"./result/top_k_stocks_{MODEL_TYPE}_{ts}.csv")
+
+    # 读取数据
+    df = pd.read_csv(output_file, parse_dates=['hold_start', 'hold_end'])
+    df.rename(columns={'Unnamed: 0': 'index'}, inplace=True)
+    # 确保按时间排序
+    df = df.sort_values(by='hold_start')
+
+    # 准备画图
+    plt.figure(figsize=(10, 6))
+
+    # 获取所有唯一 index
+    unique_indices = df['index'].unique()
+
+    for idx in unique_indices:
+        # 过滤当前 index 的所有数据
+        sub_df = df[df['index'] == idx].copy()
+        sub_df['true_ret'] = pd.to_numeric(sub_df['true_ret'], errors='coerce')  # 自动将无法转换的变为 NaN
+
+        # 按 hold_start 排序
+        sub_df = sub_df.sort_values(by='hold_start')
+
+        # 按时间顺序计算累计收益
+        sub_df['cumulative_return'] = (1 + sub_df['true_ret']).cumprod()
+
+        # 绘制曲线
+        plt.plot(sub_df['hold_start'], sub_df['cumulative_return'], label=f'top_k={idx+1}')
+
+    # 图像设置
+    plt.title(f'Cumulative Return by top_k - {MODEL_TYPE}')
+    plt.xlabel('Hold Start Date')
+    plt.xticks(rotation=90)
+    plt.ylabel('Cumulative Return')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+
+    # 保存图像
+    plt.savefig(f'./result/cumulative_return_{MODEL_TYPE}_{ts}.png', dpi=300)
+    plt.show()
+
+
+def draw_all(model_type: str, time_stamp: str):
     global MODEL_TYPE, TIME_STAMP
     MODEL_TYPE = model_type
     TIME_STAMP = time_stamp
     backtest_results()
-    plot_cumulative_return()
+    plot_cumulative_return()  # Uses default risk_free_rate=0.0 as per original
     label_acc()
     # lag_return()
     draw_box_fea()
     draw_line_fea()
+    compare_top_k()
 
 
 if __name__ == '__main__':
     # 需要修改
     os.makedirs('./result/fig', exist_ok=True)
     MODEL_TYPE = 'dt'
-    TIME_STAMP = '20250602_230653'
+    TIME_STAMP = '20250604_120514'
     draw_all(model_type=MODEL_TYPE, time_stamp=TIME_STAMP)
     # backtest_results()
     # plot_cumulative_return(0)
