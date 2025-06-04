@@ -256,10 +256,28 @@ def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
     top_with_features['true_ret'] = top_with_features['hold_end_price'] / top_with_features['hold_start_price'] - 1
 
     # 计算avg_return
-    avg_return = top_with_features['ret_fwd_6m'].mean()
-    top_with_features['ret_fwd_6m_avg'] = top_with_features['ret_fwd_6m'].expanding().mean()
-    # avg_return = top_with_features['true_ret'].mean()
+    top_with_features['true_ret_avg'] = top_with_features['true_ret'].expanding().mean()
+    avg_return = top_with_features['true_ret'].mean()
 
+    # === 添加 905 指数信息 ===
+    index_df = pd.read_csv('./data/905_price.csv')
+    index_df['date'] = pd.to_datetime(index_df['date'])
+
+    hold_start_date = pd.to_datetime(info_dict['hold_start'])
+    hold_end_date = pd.to_datetime(info_dict['hold_end'])
+
+    # 获取对应日期的收盘指数
+    idx_start_value = index_df.loc[index_df['date'] == hold_start_date, '收盘指数']
+    idx_end_value = index_df.loc[index_df['date'] == hold_end_date, '收盘指数']
+
+    # 如果没找到就设为 NaN，否则取值
+    idx_start_value = idx_start_value.values[0] if not idx_start_value.empty else np.nan
+    idx_end_value = idx_end_value.values[0] if not idx_end_value.empty else np.nan
+
+    # 添加到 top_with_features 中（每一行都一样）
+    top_with_features['905_start'] = idx_start_value
+    top_with_features['905_end'] = idx_end_value
+    top_with_features['905_true_ret'] = idx_end_value / idx_start_value - 1
 
     # 将时间信息添加为新列到 DataFrame（每行都有）
     top_with_features['train_start'] = info_dict['train_start'].date()
@@ -269,7 +287,7 @@ def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
     top_with_features['hold_start'] = info_dict['hold_start'].date()
     top_with_features['hold_end'] = info_dict['hold_end'].date()
 
-    first_columns = ['code', 'hold_start', 'hold_end', 'label', 'label_pred', 'score', 'fwd_6m_ret', 'true_ret',
+    first_columns = ['code', 'hold_start', 'hold_end', 'label', 'label_pred', 'score', 'ret_fwd_6m', 'true_ret_avg', 'true_ret',
                      'hold_start_price', 'hold_end_price']
 
     ordered_columns = first_columns + [col for col in top_with_features.columns if col not in first_columns]
@@ -297,7 +315,7 @@ def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
             hold_returns.to_csv(f"./debug/{error_prefix}_too_few_valid.csv", index=False)
             avg_return = np.nan
         else:
-            avg_return = valid_returns.mean()
+            # avg_return = valid_returns.mean()
             logger.info(f"{period_str} ✅ 成功回测：平均收益为 {avg_return:.4f}，选股数 {len(valid_returns)}")
 
     return avg_return, accuracy, model.feature_importances_

@@ -404,7 +404,7 @@ def compute_performance_metrics(backtest_df, risk_free_rate='data/BND_TreasYield
     }
 
 
-def compare_top_k():
+def compare_top_k_cum():
     ts = TIME_STAMP
     output_file = os.path.join(f"./result/top_k_stocks_{MODEL_TYPE}_{ts}.csv")
 
@@ -422,9 +422,9 @@ def compare_top_k():
 
     for idx in df['index'].unique():
         sub_df = df[df['index'] == idx].copy()
-        sub_df['true_ret'] = pd.to_numeric(sub_df['true_ret'], errors='coerce')
+        sub_df['true_ret_avg'] = pd.to_numeric(sub_df['true_ret_avg'], errors='coerce')
         sub_df = sub_df.sort_values(by='hold_start')
-        sub_df['cumulative_return'] = (1 + sub_df['true_ret']).cumprod()
+        sub_df['cumulative_return'] = (1 + sub_df['true_ret_avg']).cumprod()
 
         # 提取该 index 的最终累计收益
         final_cum_ret = sub_df['cumulative_return'].iloc[-1] if not sub_df['cumulative_return'].empty else float('-inf')
@@ -433,17 +433,19 @@ def compare_top_k():
         index_results.append((idx, sub_df, final_cum_ret))
 
     # 根据最终累计收益降序排序，取前5名
-    top_5 = sorted(index_results, key=lambda x: x[2], reverse=True)[:5]
+    top_index=30
+    top = sorted(index_results, key=lambda x: x[2], reverse=True)[:top_index]
 
     # 开始绘图
     plt.figure(figsize=(10, 6))
 
-    for idx, sub_df, final_ret in top_5:
-        plt.plot(sub_df['hold_start'], sub_df['cumulative_return'], label=f'index={idx}, final={final_ret:.2f}')
+    for idx, sub_df, final_ret in top:
+        plt.plot(sub_df['hold_start'].dt.strftime('%y-%m') + ' -> ' + sub_df['hold_end'].dt.strftime('%y-%m'),
+                 sub_df['cumulative_return'], label=f'top_k={idx+1}, final={final_ret:.2f}')
 
     # 图像设置
-    plt.title(f'Cumulative Return by Top 5 Index - {MODEL_TYPE}')
-    plt.xlabel('Hold Start Date')
+    plt.title(f'Cumulative Return by Top {top_index} Index - {MODEL_TYPE}')
+    plt.xlabel('Hold Period')
     plt.ylabel('Cumulative Return')
     plt.xticks(rotation=90)
     plt.legend()
@@ -451,10 +453,59 @@ def compare_top_k():
     plt.tight_layout()
 
     # 保存图像
-    plt.savefig(f'./result/cumulative_return_{MODEL_TYPE}_{ts}.png', dpi=300)
+    plt.savefig(f'./result/top_k_cumulative_return_{MODEL_TYPE}_{ts}.png', dpi=300)
     plt.show()
 
 
+def compare_top_k_avg():
+    ts = TIME_STAMP
+    output_file = os.path.join(f"./result/top_k_stocks_{MODEL_TYPE}_{ts}.csv")
+
+    # 读取数据
+    df = pd.read_csv(output_file, parse_dates=['hold_start', 'hold_end'])
+
+    # 修复 index 列名
+    if 'Unnamed: 0' in df.columns:
+        df.rename(columns={'Unnamed: 0': 'index'}, inplace=True)
+
+    df = df.sort_values(by='hold_start')
+
+    # 存储每个 index 的 DataFrame 及其正收益期数
+    index_results = []
+
+    for idx in df['index'].unique():
+        sub_df = df[df['index'] == idx].copy()
+        sub_df['true_ret_avg'] = pd.to_numeric(sub_df['true_ret_avg'], errors='coerce')
+        sub_df = sub_df.sort_values(by='hold_start')
+        sub_df['cumulative_return'] = (1 + sub_df['true_ret_avg']).cumprod()
+
+        # 统计 true_ret_avg > 0 的期数
+        positive_count = (sub_df['true_ret_avg'] > 0).sum()
+
+        index_results.append((idx, sub_df, positive_count))
+
+    # 按 true_ret_avg > 0 的期数排序，取前 top_index 个
+    top_index = 30
+    top = sorted(index_results, key=lambda x: x[2], reverse=True)[:top_index]
+
+    # 绘图：每期收益率
+    plt.figure(figsize=(10, 6))
+
+    for idx, sub_df, pos_count in top:
+        x_labels = sub_df['hold_start'].dt.strftime('%y-%m') + ' -> ' + sub_df['hold_end'].dt.strftime('%y-%m')
+        plt.plot(x_labels, sub_df['true_ret_avg'], label=f'top_k={idx+1}, >0 count={pos_count}')
+
+    plt.title(f'Period Returns by Top {top_index} Index (Sorted by #Positive Returns) - {MODEL_TYPE}')
+    plt.xlabel('Hold Period')
+    plt.ylabel('Return per Period')
+    plt.xticks(rotation=90)
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+
+    # 保存图像
+    plt.savefig(f'./result/top_k_period_return_by_poscount_{MODEL_TYPE}_{ts}.png', dpi=300)
+    plt.show()
 
 def draw_all(model_type: str, time_stamp: str):
     global MODEL_TYPE, TIME_STAMP
@@ -466,14 +517,19 @@ def draw_all(model_type: str, time_stamp: str):
     # lag_return()
     draw_box_fea()
     draw_line_fea()
-    compare_top_k()
+    compare_top_k_cum()
+    compare_top_k_avg()
 
 
 if __name__ == '__main__':
     # 需要修改
     os.makedirs('./result/fig', exist_ok=True)
-    MODEL_TYPE = 'dt'
-    TIME_STAMP = '20250604_120514'
-    draw_all(model_type=MODEL_TYPE, time_stamp=TIME_STAMP)
+    MODEL_TYPE = 'rf'
+    TIME_STAMP = '20250604_143800'
+    MODEL_TYPE = 'xgb'
+    TIME_STAMP = '20250604_135843'
+    # draw_all(model_type=MODEL_TYPE, time_stamp=TIME_STAMP)
+    compare_top_k_cum()
+    compare_top_k_avg()
     # backtest_results()
     # plot_cumulative_return(0)
