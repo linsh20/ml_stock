@@ -34,6 +34,7 @@ def lag_return():
 
 
 def backtest_results():
+    ###### 图1： 回测收益对比
     # 读取回测结果数据
     df = pd.read_csv(os.path.join(params['result_dir'], f"backtest_results_{MODEL_TYPE}_{TIME_STAMP}.csv"),
                      parse_dates=['hold_start', 'hold_end'])
@@ -78,6 +79,36 @@ def backtest_results():
     ax.legend(loc='upper left')
     plt.tight_layout()
     plt.savefig(f'./result/fig/backtest_results_{MODEL_TYPE}_{TIME_STAMP}.png')
+    plt.show()
+
+    ###### 图2：超额收益
+    # 新图：超额收益（模型收益 - 市场收益）
+    df['excess_return'] = df['avg_return'] - df['ret_fwd_6m']
+
+    fig2, ax2 = plt.subplots(figsize=(14, 6))
+
+    # 柱状图：超额收益
+    bars2 = ax2.bar(df['period_label'], df['excess_return'],
+                    color=['green' if x >= 0 else 'red' for x in df['excess_return']],
+                    label='Excess Return')
+
+    # 添加柱状图标签
+    for bar in bars2:
+        yval = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width() / 2, yval,
+                 f'{yval:.2%}', ha='center', va='bottom' if yval >= 0 else 'top', fontsize=8)
+
+    # 坐标轴设置
+    ax2.set_ylabel('Excess Return')
+    ax2.set_xticks(range(len(df)))
+    ax2.set_xticklabels(df['period_label'], rotation=90)
+    ax2.grid(axis='y', linestyle='--', alpha=0.7)
+    ax2.set_title('Excess Return (Model - Market) per Test Period')
+
+    # 图例
+    ax2.legend(loc='upper left')
+    plt.tight_layout()
+    plt.savefig(f'./result/fig/backtest_excess_return_{MODEL_TYPE}_{TIME_STAMP}.png')
     plt.show()
 
 

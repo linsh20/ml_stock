@@ -177,7 +177,7 @@ def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
     # 结果写入设置
     period_str = f"[test period: {info_dict['test_start']} → {info_dict['test_end']}]"
 
-    ##########       1. 选股阶段        ###########
+    ##########       1. 选股        ###########
     # 只取test_end那一天的横截面
     test_day_data = df[df['date'] == info_dict['test_end']]
     if test_day_data.empty:
@@ -190,8 +190,8 @@ def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
     label_index = list(model.classes_).index(target_label)
     y_pred = model.predict_proba(X_test)[:, label_index]
 
-    ########### 存储预测准确率（新增） TODO 整合回测输出，把数值和计算全部拆到后面一个单独的part 结果展示 量化框架
-    accuracy=-1
+    #########   2. 预测准确率    ########
+    accuracy = -1
     if 'label' in test_day_data.columns:
         y_true = test_day_data['label'].values
         y_pred_labels = model.predict(X_test)
@@ -209,6 +209,8 @@ def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
             writer.writerow([info_dict["test_start"], f"{accuracy:.4f}"])
         # —— 新增结束 ——
 
+    ######## 3. 提取top_k股票的数据    #########
+    # 3.1 获取top_with_features df
     pred_df = pd.DataFrame({
         'code': test_day_data['code'],
         'score': y_pred
@@ -226,10 +228,7 @@ def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
     # 重置索引，方便输出
     top_with_features = top_with_features.reset_index()
 
-    ###### 加入新内容 TODO https://chatgpt.com/c/683933da-439c-8010-92c2-a1c5143b6a25
-    top_with_features['hold_start'] = info_dict['hold_start']
-    top_with_features['hold_end'] = info_dict['hold_end']
-
+    # 3.2 给top_with_features df 添加列
     # 将 df 中需要的价格信息筛选出来以提高效率
     price_data = df[['code', 'date', '股票价格', 'label']]
 
@@ -238,39 +237,47 @@ def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
     # print(start_price_df)
     end_price_df = price_data[price_data['date'] == info_dict['hold_end']]
     # print(end_price_df)
-    test_end_df = price_data[price_data['date'] == info_dict['test_end']]
-    # print(end_price_df)
 
     top_with_features['label_pred'] = model.predict(top_with_features[factor_cols])
 
-    # 遍历 features_df 中的每一行股票代码，补全价格信息
-    for idx, row in top_with_features.iterrows():
-        # print("check0")
-        code = row['code']
-        if code in list(start_price_df['code']):
-            # print("check1")
-            top_with_features[top_with_features['code'] == code]['hold_start_price'] = (
-                start_price_df)[start_price_df['code'] == code]['股票价格']
-        if code in list(start_price_df['code']):
-            # print("check2")
-            top_with_features[top_with_features['code'] == code]['hold_end_price'] = (
-                end_price_df)[end_price_df['code'] == code]['股票价格']
-        # if code in list(test_end_df['code']):
-        #     print("check3")
-        #     top_with_features[top_with_features['code'] == code]['label_true'] = (
-        #         test_end_df)[test_end_df['code'] == code]['label']
+    print(start_price_df[['code', '股票价格']].rename(columns={'股票价格': 'hold_start_price'}))
+    # 合并起始价格
+    top_with_features = top_with_features.merge(
+        start_price_df[['code', '股票价格']].rename(columns={'股票价格': 'hold_start_price'}),
+        on='code', how='left'
+    )
 
-    # 写入文件时，把所有列都输出
-    output_file = os.path.join(f"./result/top_k_stocks_{MODEL_TYPE}_{ts}.txt")
+    # 合并结束价格
+    top_with_features = top_with_features.merge(
+        end_price_df[['code', '股票价格']].rename(columns={'股票价格': 'hold_end_price'}),
+        on='code', how='left'
+    )
 
-    with open(output_file, "a", encoding="utf-8") as f:
-        f.write(r'************************************************************\n')
-        f.write(f"训练集: {info_dict['train_start'].date()} ➜ {info_dict['train_end'].date()} | "
-        f"测试集: {info_dict['test_start'].date()} ➜ {info_dict['test_end'].date()} | "
-        f"持仓期: {info_dict['hold_start'].date()} ➜ {info_dict['hold_end'].date()}\n")
-        f.write(f"🔎 Top-{top_k} 选股及预测标签及因子值：\n")
-        f.write(top_with_features.to_string(index=False))
-        f.write('\n')
+    top_with_features['true_ret'] = top_with_features['hold_end_price'] / top_with_features['hold_start_price'] - 1
+
+    # 计算avg_return
+    avg_return = top_with_features['ret_fwd_6m'].mean()
+    top_with_features['ret_fwd_6m_avg'] = top_with_features['ret_fwd_6m'].expanding().mean()
+    # avg_return = top_with_features['true_ret'].mean()
+
+
+    # 将时间信息添加为新列到 DataFrame（每行都有）
+    top_with_features['train_start'] = info_dict['train_start'].date()
+    top_with_features['train_end'] = info_dict['train_end'].date()
+    top_with_features['test_start'] = info_dict['test_start'].date()
+    top_with_features['test_end'] = info_dict['test_end'].date()
+    top_with_features['hold_start'] = info_dict['hold_start'].date()
+    top_with_features['hold_end'] = info_dict['hold_end'].date()
+
+    first_columns = ['code', 'hold_start', 'hold_end', 'label', 'label_pred', 'score', 'fwd_6m_ret', 'true_ret',
+                     'hold_start_price', 'hold_end_price']
+
+    ordered_columns = first_columns + [col for col in top_with_features.columns if col not in first_columns]
+    # 写入CSV文件（保留索引）
+    output_file = os.path.join(f"./result/top_k_stocks_{MODEL_TYPE}_{ts}.csv")
+    write_header = not os.path.exists(output_file)  # 如果文件不存在就写表头
+    top_with_features.to_csv(output_file, index=True, columns=ordered_columns, mode='a',encoding='utf-8',
+                             header=write_header)
 
     error_prefix = f"error_{str(info_dict['test_start'])[:10].replace('-', '')}"
     if hold_returns.empty:
@@ -541,12 +548,6 @@ if __name__ == '__main__':
     # 读取股票池数据
     # stock_list_df = pd.read_csv(os.path.join(params['data_dir'], './best_stock_window_snapshot.csv'), parse_dates=['date'])
     stock_list_df = data_loader.get_stock_list_pd()
-
-    # 清空输出文档
-
-    la_file = os.path.join(params['result_dir'], f"top_k_stocks_{MODEL_TYPE}_{ts}.txt")
-    with open(la_file, "w", encoding="utf-8") as f:
-        pass
 
     # 3. 执行回测流程
     backtest_df, feature_df = backtest_pipeline(

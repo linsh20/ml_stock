@@ -8,6 +8,7 @@ from datetime import timedelta
 from joblib import Parallel, delayed
 from tqdm import tqdm
 from src import data_loader
+import tool1, tool_2, tool_3
 
 def label_return(r): # 打标签
     if r >= 0.15:
@@ -389,7 +390,7 @@ def calc_example(): #
 
 if __name__ == '__main__':
     # 计算因子
-    # calc_example()
+    calc_example()
 
     # group = pd.read_parquet('./data/processed/merge_data_ret.parquet')
     # group = group.copy()
@@ -404,3 +405,9 @@ if __name__ == '__main__':
     # calc_period()
     # period2cnt()
     # get_date_list()
+
+    # 一些其他处理
+    tool1.tool()
+    tool_2.tool()
+    tool_3.tool()
+
