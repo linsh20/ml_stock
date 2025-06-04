@@ -240,7 +240,7 @@ def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
 
     top_with_features['label_pred'] = model.predict(top_with_features[factor_cols])
 
-    print(start_price_df[['code', '股票价格']].rename(columns={'股票价格': 'hold_start_price'}))
+    # print(start_price_df[['code', '股票价格']].rename(columns={'股票价格': 'hold_start_price'}))
     # 合并起始价格
     top_with_features = top_with_features.merge(
         start_price_df[['code', '股票价格']].rename(columns={'股票价格': 'hold_start_price'}),
@@ -287,7 +287,7 @@ def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
     top_with_features['hold_start'] = info_dict['hold_start'].date()
     top_with_features['hold_end'] = info_dict['hold_end'].date()
 
-    first_columns = ['code', 'hold_start', 'hold_end', 'label', 'label_pred', 'score', 'ret_fwd_6m', 'true_ret_avg', 'true_ret',
+    first_columns = ['code', 'hold_start', 'hold_end', 'label', 'label_pred', 'score', 'ret_fwd_6m', 'true_ret_avg', 'true_ret', '905_true_ret',
                      'hold_start_price', 'hold_end_price']
 
     ordered_columns = first_columns + [col for col in top_with_features.columns if col not in first_columns]
@@ -583,6 +583,6 @@ if __name__ == '__main__':
                       index=False)
 
     # 5. 可视化收益曲线
-    draw.draw_all(model_type = MODEL_TYPE, time_stamp = ts)
+    draw.draw_all(model_type = MODEL_TYPE, time_stamp = ts, top_k = TOP_K)
     logger.info("回测完成，结果已保存！")
 
