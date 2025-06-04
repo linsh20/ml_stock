@@ -82,56 +82,53 @@ def backtest_results():
 
 
 def plot_cumulative_return(risk_free_rate=0.0):
-    """
-    绘制模型与中证500（905）指数的累计收益曲线，并添加数值标签和绩效指标。
-    backtest_df 应包含 ['hold_start', 'avg_return'] 列。
-    """
-    # 1. 模型累计收益
     df = pd.read_csv(os.path.join(params['result_dir'], f"backtest_results_{MODEL_TYPE}_{TIME_STAMP}.csv"),
                      parse_dates=['hold_start', 'hold_end'])
 
     df = df.sort_values(by='hold_start')
     df['cum_return'] = (1 + df['avg_return']).cumprod()
 
-    # 2. 指数累计收益
+    # 构造字符串横轴标签
+    df['period_label'] = df['hold_start'].dt.strftime('%Y-%m-%d') + ' to ' + df['hold_end'].dt.strftime('%Y-%m-%d')
+
+    # 指数累计收益
     market_df = dl.get_905_price_pd()[['date', '收盘指数', 'ret_fwd_6m']].rename(columns={'date': 'hold_start'})
     market_base = market_df.loc[market_df['hold_start'] == df['hold_start'].iloc[0], '收盘指数'].values[0]
-    market_df['r'] = market_df['收盘指数']*(1+market_df['ret_fwd_6m'])
+    market_df['r'] = market_df['收盘指数'] * (1 + market_df['ret_fwd_6m'])
     market_df = market_df.sort_values('hold_start')
-    merged = pd.merge(df[['hold_start', 'cum_return']], market_df, on='hold_start', how='left')
+
+    merged = pd.merge(df[['period_label', 'hold_start', 'cum_return']], market_df, on='hold_start', how='left')
     merged['r'] = merged['r'].ffill()
     merged['index_cum_return'] = merged['r'] / market_base
 
-    # 3. 计算模型绩效指标
+    # 计算模型绩效
     metrics = compute_performance_metrics(df, risk_free_rate)
 
-    # 4. 绘图
-    plt.figure(figsize=(12, 6))
-    x = merged['hold_start']
+    # 绘图
+    plt.figure(figsize=(14, 6))
+    x_labels = merged['period_label']
     model_y = merged['cum_return']
     index_y = merged['index_cum_return']
 
-    # 模型曲线及标签
-    plt.plot(x, model_y, label='Model Cumulative Return', marker='o')
+    plt.plot(x_labels, model_y, label='Model Cumulative Return', marker='o')
     for i, val in enumerate(model_y):
-        plt.text(x[i], val, f'{val:.2f}', ha='center', va='bottom', fontsize=12)
+        plt.text(i, val, f'{val:.2f}', ha='center', va='bottom', fontsize=10)
 
-    # 指数曲线及标签
-    plt.plot(x, index_y, label='Market Cumulative Return (905)', marker='s', linestyle='--', color='gray')
+    plt.plot(x_labels, index_y, label='Market Cumulative Return (905)', marker='s', linestyle='--', color='gray')
     for i, val in enumerate(index_y):
-        plt.text(x[i], val, f'{val:.2f}', ha='center', va='top', fontsize=12, color='gray')
+        plt.text(i, val, f'{val:.2f}', ha='center', va='top', fontsize=10, color='gray')
 
-    plt.xlabel('Time')
+    plt.xlabel('Period')
     plt.ylabel('Cumulative Return')
     plt.title('Cumulative Return vs. Market Benchmark')
     plt.legend()
     plt.grid(True)
-    plt.xticks(rotation=45)
+    plt.xticks(rotation=90)
     plt.tight_layout()
     plt.savefig(f'./result/fig/cumulative_return_{MODEL_TYPE}_{TIME_STAMP}.png')
     plt.show()
 
-    # 5. 显示绩效指标文本框
+    # 展示绩效指标
     textstr = '\n'.join([
         f"Annualized Return: {metrics['Annualized Return']:.2%}",
         f"Volatility:         {metrics['Volatility']:.2%}",
@@ -145,6 +142,7 @@ def plot_cumulative_return(risk_free_rate=0.0):
     plt.tight_layout()
     plt.savefig(f'./result/fig/performance_metrics_{MODEL_TYPE}_{TIME_STAMP}.png')
     plt.show()
+
 
 
 
@@ -245,16 +243,28 @@ def draw_line_fea():
     plt.show()
 
 
-def compute_performance_metrics(backtest_df, risk_free_rate=0.0):
+def compute_performance_metrics(backtest_df, risk_free_rate='data/BND_TreasYield_filter.csv'):
+    import pandas as pd
+    import numpy as np
+
     backtest_df = backtest_df.copy()
-
-    # 确保日期列是 datetime 格式
     backtest_df['hold_start'] = pd.to_datetime(backtest_df['hold_start'])
-    backtest_df['hold_end'] = pd.to_datetime(backtest_df['hold_end'])
 
-    returns = backtest_df['avg_return'].dropna()
+    # 区分：是路径还是数值
+    if isinstance(risk_free_rate, str):  # 文件路径
+        rf_df = pd.read_csv(risk_free_rate)
+        rf_df['Trddt'] = pd.to_datetime(rf_df['Trddt'])
+        rf_df = rf_df.sort_values('Trddt').set_index('Trddt')
+        backtest_df['rf'] = backtest_df['hold_start'].map(
+            lambda d: rf_df.loc[rf_df.index <= d, 'Yield'].iloc[-1]
+            if not rf_df.loc[rf_df.index <= d].empty else np.nan
+        )
+    else:  # 单一无风险利率数字（如 0.03）
+        backtest_df['rf'] = risk_free_rate
 
-    if returns.empty or len(returns) < 2:
+    backtest_df = backtest_df.dropna(subset=['avg_return', 'rf'])
+
+    if len(backtest_df) < 2:
         return {
             'Annualized Return': np.nan,
             'Volatility': np.nan,
@@ -262,17 +272,24 @@ def compute_performance_metrics(backtest_df, risk_free_rate=0.0):
             'Max Drawdown': np.nan
         }
 
-    # 使用每行的 hold_end - hold_start 来计算持有期长度，并求平均
-    period_days = (backtest_df['hold_end'] - backtest_df['hold_start']).dt.days
-    avg_period_days = period_days.mean()
-    annual_factor = 365 / avg_period_days if avg_period_days > 0 else 1
+    returns = backtest_df['avg_return'].values
+    rfs = backtest_df['rf'].values
+    n = len(returns)
+    m = 2  # 半年一期
+    T = n / m
 
-    annualized_return = (1 + returns.mean()) ** annual_factor - 1
-    annualized_volatility = returns.std() * np.sqrt(annual_factor)
-    sharpe_ratio = (annualized_return - risk_free_rate) / annualized_volatility if annualized_volatility != 0 else np.nan
+    cumulative_return = np.prod(1 + returns)
+    annualized_return = cumulative_return ** (1 / T) - 1
 
-    cum_returns = (1 + returns).cumprod()
-    peak = cum_returns.cummax()
+    volatility = np.std(returns)
+    annualized_volatility = volatility * np.sqrt(m)
+
+    excess_return = returns - rfs
+    annualized_excess_return = np.mean(excess_return) * m
+    sharpe_ratio = annualized_excess_return / annualized_volatility if annualized_volatility > 0 else np.nan
+
+    cum_returns = np.cumprod(1 + returns)
+    peak = np.maximum.accumulate(cum_returns)
     drawdown = (cum_returns - peak) / peak
     max_drawdown = drawdown.min()
 
@@ -280,7 +297,8 @@ def compute_performance_metrics(backtest_df, risk_free_rate=0.0):
         'Annualized Return': annualized_return,
         'Volatility': annualized_volatility,
         'Sharpe Ratio': sharpe_ratio,
-        'Max Drawdown': max_drawdown
+        'Max Drawdown': max_drawdown,
+        'Cumulative Return': cumulative_return
     }
 
 
@@ -291,7 +309,7 @@ def draw_all(model_type:str, time_stamp:str):
     backtest_results()
     plot_cumulative_return()
     label_acc()
-    lag_return()
+    # lag_return()
     draw_box_fea()
     draw_line_fea()
 
@@ -300,7 +318,7 @@ if __name__ == '__main__':
     # 需要修改
     os.makedirs('./result/fig', exist_ok=True)
     MODEL_TYPE = 'dt'
-    TIME_STAMP = '20250529_232245'
+    TIME_STAMP = '20250602_230653'
     draw_all(model_type=MODEL_TYPE, time_stamp=TIME_STAMP)
     # backtest_results()
     # plot_cumulative_return(0)

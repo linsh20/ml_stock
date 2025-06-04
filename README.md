@@ -41,7 +41,7 @@
 │  │  preprocess.py
 ```
 
-## 1-数据清洗
+## step 1 - 数据清洗
 
 ### 数据读入
 
@@ -50,26 +50,36 @@
 - `./data/500.csv`：成分股变化数据
 - `./data/financial/*_balance.csv`：财报数据，主要为了获取财报发布日期。来源：akshare新浪财报api。
 
-### 运行流程
+### 步骤
 
 1. 配置环境，安装对应的包
 2. \*运行`data_loader.py`，把数据转为更高效的parquet格式，方便后续处理
-3. 运行`preprocess.py`的两个函数
+3. 运行`preprocess.py`的两个函数，数据对齐
 4. 运行`prepare.py`计算因子（耗时较长）
-
 5. 得到`./data/processed/merge_data_ret.parquet`，作为之后模型训练的输入
 
-## 2-模型训练
+## step 2 - 模型训练
 
 ### 数据读入
 
 - `./data/processed/merge_data_ret.parquet`，合并了日度、季度，考虑了财报发布时间的准point-in-time数据，也计算了因子。
 - `./data/processed/zz500_list_filter.csv`，对齐中证500成分股调整日的滑动窗口股票列表
+- `./data/FBND_TreasYield_filter.csv`，半年期无风险利率
 
 ### 运行流程
 
-1. 运行`run.py`
+6. 运行`main_model.py`，训练完成后也会自动调用`draw.py`画图（也可以自行单独调用）
+```angular2html
+参数说明：
+model_type：可以填入dt rf xgb。默认为dt.
+n_jobs:cpu线程并行数量，调大能缩短训练时间，但是如果过大会爆内存。默认为8。
+top_k:持仓股票数。默认为15.
+k_fold:训练-验证集划分的折数。默认为5.
 
+如果用ide(如pycharm）直接运行，就是默认参数。可以在代码的一开始直接改default的值.
+也可以用命令行运行直接设置参数，命令行运行示例：
+python main_model.py --model_type dt --n_jobs 8 --top_k 15 --k_fold 5
+```
 ## 代码注释
 
 ### `src/preprocess.py`：数据预处理流程
@@ -93,7 +103,7 @@
    3. `create_factors`：处理其他因子，主要涉及对excel列之间的运算
    4. `calc_beta_3y_factors`：从中证500指数引入市场收益率，计算`beta_cov`和`beta_reg`
 
-备注：缺失值的处理在`run.py`中进行
+备注：缺失值的处理在`main_model.py`中进行
 
 废弃部分：
 
@@ -103,7 +113,7 @@
   2. `period2cnt`：计算每日数据可用的股票数量，画图可视化
   3. `get_date_list`：在`calc_period`结果的基础上，遍历4个月（84d），计算最佳开始日（最大化股票总数量），输出`best_stock_window_snapshot.csv`，为开始日和股票List的匹配结果
 
-### ``run.py``：模型训练和回测
+### ``main_model.py``：模型训练和回测
 
 输入：清洗好的数据；输出：结果
 
@@ -111,8 +121,8 @@
 
 1. 读取价格数据 (read： `merge_data_ret.csv`)，作为`df`
 2. 从数据中选取作为因子的列：`factor_cols = ['6m_return', '11m_return']`
-3. 使用之前根据数据+中证500筛选好的满足条件的股票列表数据：`best_stock_window_snapshot.csv`，作为`stock_list_df`
-4. ==调用==回测主要流程函数：`backtest_df, feature_df = backtest_pipeline()`
+3. 使用之前根据数据+中证500筛选好的满足条件的股票列表数据：`zz500_list_filter.csv`，作为`stock_list_df`
+4. ==调用==回测主要流程函数：`backtest_pipeline()`
 5. 输出结果：回测结果`backtest_df`和因子重要性`feature_df`
 
 #### 2. 主流程：`back_test_pipeline`函数
@@ -160,11 +170,13 @@ def select_stocks_and_backtest(model, X_test, hold_data, return_col, imputer, st
 2. 查找这些股票在`hold`集上的收益率，取平均（因为假设平均持仓）；检查有效股票数量
 3. 返回收益率平均、模型的特征重要性
 
+### `draw.py`画图和计算指标
+每期收益图、累计收益图、标签预测准确性图、因子重要性图、指标
+
 ### 其他文件
 
 - `src/data_loader.py`：统一数据读入接口（函数调用）；数据格式转换工具（main函数)
-- `read_csv.py`：用来根据列字段（如股票代码或日期）筛选csv/parquet中的行，导出可以查看的新文件，解决csv/parquet过大不方便查看的问题
-- `draw.py`：画图展示结果
+- `read_csv.py`：用来根据列字段（如股票代码或日期）筛选csv/parquet中的行，导出可以查看的新文件，解决csv/parquet格式大文件因过大而不便查看的问题
 - `get_fin_rep.py`：使用akshare api下载资产负债表
 - `config.py`：用来保存参数，比如文件路径
 
@@ -181,13 +193,13 @@ def select_stocks_and_backtest(model, X_test, hold_data, return_col, imputer, st
 
 ## 结果影响因素
 
-top-K
+top-K：1
 
-k-fold
+k-fold： 试了5和10，结果差别很小
 
-model-type
+model-type： xgb > rf > dt
 
-random seed
+random seed ： 会有影响，当前固定的29（可以修改`random_seed`变量调整），可以复现
 
 ## 可视化展示
 
@@ -213,9 +225,11 @@ random seed
 
 3. feature importance（箱图或折线图）
 
-## 版本记录(不全)
+4. label accuracy
 
-- preprocess.py process_daily_season_data etc. ： 1.merge季度日度和财报公告日数据 2.补全公告日期缺失值
-- calc_example_test_finish: prepare.py中计算因子，在parquet格式下跑通流程
-- backtest_pipeline重写&并集:  backtest_pipeilne更换逻辑，和中证500对齐；滑动窗口从交集改为并集；修复小BUg；修改markdown；修复daily_data_2_stock_list()csv输出格式
-- proprocess change & run change : 修改merge逻辑，保证正确性；修改daily_data_2_stock_list函数，改为从905_daily_fill生成；修改run.py，符合需求；删除多余注释
+## 代码统计
+### 代码行数
+python 2000-3000行 (pycharm statistic工具统计)
+
+### 版本记录
+见git

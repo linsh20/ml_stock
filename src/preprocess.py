@@ -18,9 +18,9 @@ def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表 暂�
     2. 基于该列表做 9 期滑动窗口交集，输出 zz500_list_filter.csv。
     """
     # ======== 常量定义 ========
-    file_path = "../data/905_daily_fill.csv"
-    PARQUET_PATH = "../data/raw/merge_final.parquet"
-    OUT_DIR = "../data/processed"
+    file_path = "./data/905_daily_fill.csv"
+    PARQUET_PATH = "./data/raw/merge_final.parquet"
+    OUT_DIR = "./data/processed"
     FNAME_ALL = "zz500_list.csv"
     FNAME_WIN9 = "zz500_list_filter.csv"
 
@@ -80,7 +80,7 @@ def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表 暂�
     # -------- 5. 基于“有变动”列表做 9 期滑动窗口并集 --------
     records = []
 
-    for i in range(len(cl) - 8):
+    for i in range(len(cl) - 9): # 丢弃最后一期！！
         window = cl.iloc[i: i + 9]
         common = set(window.iloc[0]["code"])
         for codes in window["code"].iloc[1:]:
@@ -93,7 +93,7 @@ def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表 暂�
         if i + 9 < len(cl):
             end_date = cl.iloc[i + 9]["date"]
         else:
-            end_date = window.iloc[8]["date"]  # window.iloc[8] 即第 9 期
+            end_date = window.iloc[8]["date"]  # window.iloc[8] 即第 9 期 # TODO
 
         records.append({
             "train_date": train_date,
@@ -158,15 +158,15 @@ def process_daily_season_data(): # 1.merge季度日度和财报公告日数据 2
     """
 
     # ---------- 0. 统一设置 ----------
-    season_path = "../data/raw/season_500_0512.parquet"
-    daily_path = "../data/raw/merge_final.parquet"
+    season_path = "./data/raw/season_500_0512.parquet"
+    daily_path = "./data/raw/merge_final.parquet"
 
     # test
     # season_path = "../data/processed/read_season.parquet"
     # daily_path = "../data/processed/read_daily.parquet"
 
-    fin_glob = "../data/financial/*_balance.csv"  # 扫描全部股票
-    out_path = "../data/processed/merge_data.parquet"
+    fin_glob = "./data/financial/*_balance.csv"  # 扫描全部股票
+    out_path = "./data/processed/merge_data.parquet"
 
     # ---------- 1. 读取并整理财报 csv ----------
     fin_frames = []
@@ -309,14 +309,12 @@ def process_daily_season_data(): # 1.merge季度日度和财报公告日数据 2
                 else:
                     print("✅ 日期范围有交集，merge_asof 应能匹配部分数据")
 
-
-
             out = pd.merge_asof(
                 grp_daily,
                 grp_season,
                 left_on='日期',
                 right_on='公开日期',
-                direction='forward',
+                direction='backward', # 修改
                 allow_exact_matches=True,
                 suffixes=('','季度数据'),
             )
@@ -336,7 +334,9 @@ def process_daily_season_data(): # 1.merge季度日度和财报公告日数据 2
 
     print(f"✅ 处理完毕，文件已保存到: {out_path}")
 
-
 if __name__ == "__main__":
+    print(os.getcwd())
+    print("1")
     daily_data_2_stock_list()
-    # process_daily_season_data()
+    print("2")
+    process_daily_season_data()

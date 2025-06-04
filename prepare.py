@@ -278,7 +278,8 @@ def merge_season_data(merge_data, season_data_path, cols):
         tmp = pd.merge_asof(
             daily,
             quarter,
-            on='date',
+            left_on='date',
+            right_on = '财报观察日期',
             direction='backward',
         )
 
@@ -337,8 +338,9 @@ def process_stock(code, df, market_df, window_days):
 
     return beta_cov_list, beta_reg_list
 
+
 def calc_beta_3y_factors(df, n_jobs=-1):
-    market_df = pd.read_csv('./data/905_price.csv', parse_dates=['日期'])
+    market_df = pd.read_csv('./data/905_price.csv', parse_dates=['date'])
     market_df.rename(columns={'日期': 'date', '指数回报率': 'market_ret'}, inplace=True)
     market_df['market_ret'] = market_df['market_ret'].astype(float)
 
@@ -381,11 +383,12 @@ def calc_example(): #
     print("finish calc_beta_3y_factors")
     # df.to_csv(os.path.join(params['data_dir'], 'merge_data_ret.csv'), index=False, encoding='utf-8-sig')
     df['date'] = pd.to_datetime(df['date']).dt.date
-    df.to_parquet('./data/processed/merge_data_ret.parquet', index=False, engine='pyarrow')
+    df.to_parquet('./data/processed/merge_data_ret_2.parquet', index=False, engine='pyarrow')
     print("已保存df")
 
 
 if __name__ == '__main__':
+    # 计算因子
     # calc_example()
 
     # group = pd.read_parquet('./data/processed/merge_data_ret.parquet')
@@ -393,6 +396,7 @@ if __name__ == '__main__':
     # group['ret_fwd_6m'] = ((group['股票价格'].shift(-126) / group['股票价格']) - 1).astype(np.float32)
     # group.to_parquet('./data/processed/merge_data_ret_1.parquet', index=False, engine='pyarrow')
 
+    # 计算中证500 6M Forward Return
     group = pd.read_csv("./data/905_price.csv", encoding='utf-8')
     group = group.copy()
     group['ret_fwd_6m'] = ((group['收盘指数'].shift(-126) / group['收盘指数']) - 1).astype(np.float32)

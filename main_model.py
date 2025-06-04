@@ -24,40 +24,57 @@ from logging.handlers import TimedRotatingFileHandler
 import requests
 import src.data_loader as dl
 import argparse
+from sklearn.preprocessing import LabelEncoder
 
-parser = argparse.ArgumentParser(description="Run time series model.")
-parser.add_argument('--model_type', type=str, default='rf', choices=['dt', 'rf', 'xgb'],
-                    help="Type of model to use: 'dt' (Decision Tree), 'rf' (Random Forest), 'xgb' (XGBoost)")
-parser.add_argument('--test', action='store_true', help="Whether to run in test mode")
-parser.add_argument('--n_jobs', type=int, default=-1,
-                    help="Number of parallel jobs to run. -1 means using all processors.")
-args = parser.parse_args()
 
-MODEL_TYPE = args.model_type # dt rf xgb
-TEST_FLAG = args.test
-N_JOBS = args.n_jobs
+def parse_args():
+    # 解析参数
+    parser = argparse.ArgumentParser(description="Run time series model.")
+    parser.add_argument('--model_type', type=str, default='dt', choices=['dt', 'rf', 'xgb'],
+                        help="Type of model to use: 'dt' (Decision Tree), 'rf' (Random Forest), 'xgb' (XGBoost)")
+    parser.add_argument('--test', action='store_true', help="Whether to run in test mode")
+    parser.add_argument('--n_jobs', type=int, default=8,
+                        help="Number of parallel jobs to run. -1 means using all processors.")
+    parser.add_argument('--top_k', type=int, default=15,
+                        help="Number of top stocks to select based on predicted scores.")
+    parser.add_argument('--k_fold', type=int, default=5,
+                        help="Number of folds in time-series cross-validation.")
+    args = parser.parse_args()
+    return args
 
-LOG_DIR = './logs'
-os.makedirs(LOG_DIR, exist_ok=True)
-LOG_PATH = os.path.join(LOG_DIR, "pipeline.log")
-logger = logging.getLogger("backtest_pipeline")
-logger.setLevel(logging.INFO)
-# 控制台输出
-ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
-# 按天滚动的文件输出，保留最近 7000 天日志
-fh = TimedRotatingFileHandler(
-    LOG_PATH, when="midnight", interval=1, backupCount=7000, encoding="utf-8"
-)
-fh.setLevel(logging.DEBUG)
-fmt = logging.Formatter(
-    "%(asctime)s [%(levelname)s] %(module)s:%(lineno)d - %(message)s"
-)
-ch.setFormatter(fmt)
-fh.setFormatter(fmt)
-logger.addHandler(ch)
-logger.addHandler(fh)
 
+def init_logs():
+    LOG_DIR = './logs'
+    os.makedirs(LOG_DIR, exist_ok=True)
+    LOG_PATH = os.path.join(LOG_DIR, "pipeline.log")
+    logger = logging.getLogger("backtest_pipeline")
+    logger.setLevel(logging.INFO)
+    # 控制台输出
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    # 按天滚动的文件输出，保留最近 7000 天日志
+    fh = TimedRotatingFileHandler(
+        LOG_PATH, when="midnight", interval=1, backupCount=7000, encoding="utf-8"
+    )
+    fh.setLevel(logging.DEBUG)
+    fmt = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(module)s:%(lineno)d - %(message)s"
+    )
+    ch.setFormatter(fmt)
+    fh.setFormatter(fmt)
+    logger.addHandler(ch)
+    logger.addHandler(fh)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    return logger, ts
+
+
+MODEL_TYPE = 'dt' # dt rf xgb
+TEST_FLAG = False
+N_JOBS = 4
+TOP_K = 15
+K_FOLD = 5
 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
@@ -89,7 +106,7 @@ def day_2_trading_day(day, trading_day_list_df, logic = 'prev', cnt = 1):
     return day
 
 
-def train_model_with_tscv(X_train, y_train, model_type='dt', n_splits=5, random_seed=29, criterion = 'gini',
+def train_model_with_tscv(X_train, y_train, model_type='dt', n_splits=K_FOLD, random_seed=29, criterion = 'gini',
                           n_jobs = 1): # 模型训练
     tscv = TimeSeriesSplit(n_splits=n_splits)
 
@@ -106,15 +123,12 @@ def train_model_with_tscv(X_train, y_train, model_type='dt', n_splits=5, random_
             'tree_method': 'hist',
             'n_jobs': n_jobs,
             'random_state': random_seed,
-            'verbosity': 0  # 可选：避免多线程打印冲突
+            'verbosity': 0
         }
-    else:
-        raise ValueError("Unsupported model type")
 
     models = []
     scores = []
     times = []
-
     logger.info(f"Training {model_type.upper()} model with {n_splits}-fold TimeSeriesSplit...\n")
     for i, (train_index, val_index) in enumerate(tqdm(tscv.split(X_train), total=n_splits, desc="Progress")):
         start_time = time.time()
@@ -122,10 +136,20 @@ def train_model_with_tscv(X_train, y_train, model_type='dt', n_splits=5, random_
         X_tr, X_val = X_train.iloc[train_index], X_train.iloc[val_index]
         y_tr, y_val = y_train.iloc[train_index], y_train.iloc[val_index]
 
+        if model_type == 'xgb':
+            label_encoder = LabelEncoder()
+            y_tr = label_encoder.fit_transform(y_tr)
+            y_val = label_encoder.transform(y_val)
+
         model = model_class(**model_kwargs)
         model.fit(X_tr, y_tr)
 
         y_pred = model.predict(X_val)
+
+        if model_type == 'xgb':
+            y_pred = label_encoder.inverse_transform(y_pred)
+            y_val = label_encoder.inverse_transform(y_val)
+
         score = accuracy_score(y_val, y_pred)
 
         models.append(model)
@@ -133,7 +157,8 @@ def train_model_with_tscv(X_train, y_train, model_type='dt', n_splits=5, random_
 
         elapsed_time = time.time() - start_time
         times.append(elapsed_time)
-        logger.info(f"Fold {i + 1}: Accuracy={score:.4f}, Time={elapsed_time:.2f} seconds")
+        if logger:
+            logger.info(f"Fold {i + 1}: Accuracy={score:.4f}, Time={elapsed_time:.2f} seconds")
 
     best_model = models[np.argmax(scores)]
     logger.info(f"\nBest accuracy: {max(scores):.4f}")
@@ -143,7 +168,7 @@ def train_model_with_tscv(X_train, y_train, model_type='dt', n_splits=5, random_
 
 
 def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
-                                 top_k=15, target_label=5): # 选股回测
+                                 top_k=TOP_K, target_label=4): # 选股回测
     test_end = info_dict["test_end"]
     hold_end = info_dict["hold_end"]
     df = df[(df['date'] >= test_end) & (df['date'] <= hold_end)]
@@ -184,7 +209,6 @@ def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
             writer.writerow([info_dict["test_start"], f"{accuracy:.4f}"])
         # —— 新增结束 ——
 
-
     pred_df = pd.DataFrame({
         'code': test_day_data['code'],
         'score': y_pred
@@ -196,16 +220,57 @@ def evaluate_model_with_backtest(model, info_dict, df, factor_cols, return_col,
         (df['code'].astype(str).isin(selected_ids))
         ]
     # 从当天的 test_day_data 中，用 code 做索引，提取所有因子列
-    features_df = test_day_data.set_index('code')[factor_cols]
+    features_df = test_day_data.set_index('code')  # 列名: code score 6m_return 因子列
     # 把 score 和因子值合并到一个表里
     top_with_features = top_stocks.set_index('code').join(features_df)
     # 重置索引，方便输出
     top_with_features = top_with_features.reset_index()
+
+    ###### 加入新内容 TODO https://chatgpt.com/c/683933da-439c-8010-92c2-a1c5143b6a25
+    top_with_features['hold_start'] = info_dict['hold_start']
+    top_with_features['hold_end'] = info_dict['hold_end']
+
+    # 将 df 中需要的价格信息筛选出来以提高效率
+    price_data = df[['code', 'date', '股票价格', 'label']]
+
+    # 提取 hold_start 和 hold_end 日期的价格数据
+    start_price_df = price_data[price_data['date'] == info_dict['hold_start']]
+    # print(start_price_df)
+    end_price_df = price_data[price_data['date'] == info_dict['hold_end']]
+    # print(end_price_df)
+    test_end_df = price_data[price_data['date'] == info_dict['test_end']]
+    # print(end_price_df)
+
+    top_with_features['label_pred'] = model.predict(top_with_features[factor_cols])
+
+    # 遍历 features_df 中的每一行股票代码，补全价格信息
+    for idx, row in top_with_features.iterrows():
+        # print("check0")
+        code = row['code']
+        if code in list(start_price_df['code']):
+            # print("check1")
+            top_with_features[top_with_features['code'] == code]['hold_start_price'] = (
+                start_price_df)[start_price_df['code'] == code]['股票价格']
+        if code in list(start_price_df['code']):
+            # print("check2")
+            top_with_features[top_with_features['code'] == code]['hold_end_price'] = (
+                end_price_df)[end_price_df['code'] == code]['股票价格']
+        # if code in list(test_end_df['code']):
+        #     print("check3")
+        #     top_with_features[top_with_features['code'] == code]['label_true'] = (
+        #         test_end_df)[test_end_df['code'] == code]['label']
+
     # 写入文件时，把所有列都输出
     output_file = os.path.join(f"./result/top_k_stocks_{MODEL_TYPE}_{ts}.txt")
+
     with open(output_file, "a", encoding="utf-8") as f:
-        f.write(f"{info_dict['test_start']}  🔎 Top-{top_k} 选股及预测标签及因子值：\n")
+        f.write(r'************************************************************\n')
+        f.write(f"训练集: {info_dict['train_start'].date()} ➜ {info_dict['train_end'].date()} | "
+        f"测试集: {info_dict['test_start'].date()} ➜ {info_dict['test_end'].date()} | "
+        f"持仓期: {info_dict['hold_start'].date()} ➜ {info_dict['hold_end'].date()}\n")
+        f.write(f"🔎 Top-{top_k} 选股及预测标签及因子值：\n")
         f.write(top_with_features.to_string(index=False))
+        f.write('\n')
 
     error_prefix = f"error_{str(info_dict['test_start'])[:10].replace('-', '')}"
     if hold_returns.empty:
@@ -308,6 +373,7 @@ def run_single_backtest(
         df = df,
         factor_cols=factor_cols,
         return_col=return_col,
+        top_k=TOP_K,
     )
 
     return {
@@ -322,7 +388,7 @@ def run_single_backtest(
             "accuracy": accuracy,
         },
         "importance": {
-            "date": test_start,
+            "date": hold_start,
             **{factor: val for factor, val in zip(factor_cols, feat_importance)},
         },
     }
@@ -335,7 +401,7 @@ def backtest_pipeline(
     return_col: str,
     stock_id_col: str,
     schedule_csv: str = "./data/processed/zz500_list_filter.csv",
-    top_k: int = 15,
+    top_k: int = TOP_K,
     model_type: str = MODEL_TYPE,
 ):
     """f
@@ -399,8 +465,9 @@ def backtest_pipeline(
 
     # 总用时打印
     time_cnt = time.time() - start_time
-    logger.info(f"🚀 回测完成（{len(results)} 轮），总用时：{format_seconds(time_cnt)}")
-
+    logger.info(f"🚀 回测完成（{len(results)} 轮），总用时：{format_seconds(time_cnt)}\n")
+    logger.info(f"参数：ts:{ts}, model_type:{MODEL_TYPE}, k-fold: {K_FOLD}, top-k : {TOP_K}\n")
+    logger.info("***********************************\n")
     return pd.DataFrame(results), pd.DataFrame(feature_importance_list)
 
 
@@ -409,6 +476,13 @@ if __name__ == '__main__':
     os.makedirs('./result', exist_ok=True)
     os.makedirs('./result/fig', exist_ok=True)
     os.makedirs('./data/processed', exist_ok=True)
+    args = parse_args()
+    MODEL_TYPE = args.model_type
+    TEST_FLAG = args.test
+    N_JOBS = args.n_jobs
+    TOP_K = args.top_k
+    K_FOLD = args.k_fold
+    logger, ts = init_logs()
 
     # 下载数据集
     file_id = '1pULLUf_W9KKtgrZSIYMjGVqb7BeizwZM'
@@ -433,16 +507,17 @@ if __name__ == '__main__':
 
 
     # 1.定义列名
-    factor_cols = ['6m_return', '11m_return',
-                   '总市值',  # 日度数据
-                   'pe', 'pb', 'ps', '现金流比股价',  # 日度季度组合数据
-                   '净资产收益率A', '每股收益',  # 季度数据l
-                   '资本支出比总市值', '流动比率', 'ocfp', 'capex', 'evebit', 'evebitda', '企业价值不含货币资金',
-                   '12m_lagged_return', '24m_lagged_return',
-                   'Beta3Y_Cov', 'Beta3Y_Reg']
+    factor_cols = ['momentum_6m', 'momentum_11m',
+                   'marketcap',
+                   'earnings-to-price', 'price-to-book', 'price-to-sales', 'operating cashflow-to-price',
+                   'roe', 'earnings-per-share',
+                   'investment-to-price', 'current-ratio', 'operating cashflow-to-equity', 'capex',
+                   'evebit', 'evebitda', 'enterprise-value',
+                   'returns_12m_lagged_12m', 'returns_12m_lagged_24m',
+                   'beta_3Y_coef', 'beta_3Y']
     """
         资本支出 / 总市值
-        流动比率： 流动资产（缺）/流动负债（有）
+        流动比率： 流动资产（缺）/流动负债（有） T10100
         ocfp: 经营活动现金流量净额(有）/ 净资产（无？）
         capex: 资本支出/营业收入（都有）zz
         evebit: 企业价值（用哪个？）/ EBIT(季度）
@@ -452,13 +527,8 @@ if __name__ == '__main__':
     label_col = 'label'  # 分类标签：高/中/低收益（分类问题）
     return_col = 'ret_fwd_6m'  # 实际未来收益率（连续值，用于回测）
     stock_id_col = 'code'  # 股票代码 后面rename
-    cols_input = ['6m_return', '11m_return', '总市值',  # 日度数据
-                  'pe', 'pb', 'ps', '现金流比股价',  # 日度季度组合数据
-                  '净资产收益率A', '每股收益',  # 季度数据
-                  '资本支出比总市值', '流动比率', 'ocfp', 'capex', 'evebit', 'evebitda', '企业价值不含货币资金',
-                  '12m_lagged_return', '24m_lagged_return',
-                  'Beta3Y_Cov', 'Beta3Y_Reg',
-                  'date', 'code', 'label', 'ret_fwd_6m']
+    cols_input = factor_cols + ['date', 'code', label_col, return_col, '股票价格']
+
     logging.info(f"共有{len(cols_input)}个因子，因子列:{list(cols_input)}")
     logging.info(f"结果列:{return_col}")
     # 2. 读取并准备数据
@@ -485,6 +555,7 @@ if __name__ == '__main__':
         label_col=label_col,
         return_col=return_col,
         stock_id_col=stock_id_col,
+        model_type = MODEL_TYPE,
     )
 
     # 4. 输出回测结果与因子重要性
