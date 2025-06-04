@@ -405,41 +405,47 @@ def compute_performance_metrics(backtest_df, risk_free_rate='data/BND_TreasYield
 
 
 def compare_top_k():
-    ts=TIME_STAMP
-
+    ts = TIME_STAMP
     output_file = os.path.join(f"./result/top_k_stocks_{MODEL_TYPE}_{ts}.csv")
 
     # 读取数据
     df = pd.read_csv(output_file, parse_dates=['hold_start', 'hold_end'])
-    df.rename(columns={'Unnamed: 0': 'index'}, inplace=True)
-    # 确保按时间排序
+
+    # 修复 index 列名
+    if 'Unnamed: 0' in df.columns:
+        df.rename(columns={'Unnamed: 0': 'index'}, inplace=True)
+
     df = df.sort_values(by='hold_start')
 
-    # 准备画图
-    plt.figure(figsize=(10, 6))
+    # 存储每个 index 的 DataFrame 及其最终累计收益
+    index_results = []
 
-    # 获取所有唯一 index
-    unique_indices = df['index'].unique()
-
-    for idx in unique_indices:
-        # 过滤当前 index 的所有数据
+    for idx in df['index'].unique():
         sub_df = df[df['index'] == idx].copy()
-        sub_df['true_ret'] = pd.to_numeric(sub_df['true_ret'], errors='coerce')  # 自动将无法转换的变为 NaN
-
-        # 按 hold_start 排序
+        sub_df['true_ret'] = pd.to_numeric(sub_df['true_ret'], errors='coerce')
         sub_df = sub_df.sort_values(by='hold_start')
-
-        # 按时间顺序计算累计收益
         sub_df['cumulative_return'] = (1 + sub_df['true_ret']).cumprod()
 
-        # 绘制曲线
-        plt.plot(sub_df['hold_start'], sub_df['cumulative_return'], label=f'top_k={idx+1}')
+        # 提取该 index 的最终累计收益
+        final_cum_ret = sub_df['cumulative_return'].iloc[-1] if not sub_df['cumulative_return'].empty else float('-inf')
+
+        # 记录：index，子数据，最后累计收益
+        index_results.append((idx, sub_df, final_cum_ret))
+
+    # 根据最终累计收益降序排序，取前5名
+    top_5 = sorted(index_results, key=lambda x: x[2], reverse=True)[:5]
+
+    # 开始绘图
+    plt.figure(figsize=(10, 6))
+
+    for idx, sub_df, final_ret in top_5:
+        plt.plot(sub_df['hold_start'], sub_df['cumulative_return'], label=f'index={idx}, final={final_ret:.2f}')
 
     # 图像设置
-    plt.title(f'Cumulative Return by top_k - {MODEL_TYPE}')
+    plt.title(f'Cumulative Return by Top 5 Index - {MODEL_TYPE}')
     plt.xlabel('Hold Start Date')
-    plt.xticks(rotation=90)
     plt.ylabel('Cumulative Return')
+    plt.xticks(rotation=90)
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -447,6 +453,7 @@ def compare_top_k():
     # 保存图像
     plt.savefig(f'./result/cumulative_return_{MODEL_TYPE}_{ts}.png', dpi=300)
     plt.show()
+
 
 
 def draw_all(model_type: str, time_stamp: str):
