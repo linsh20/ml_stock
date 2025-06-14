@@ -1,5 +1,7 @@
 # 代码说明和结果展示
 
+## 说明：这个是早期文档，提供代码细节参考，有可能和最新版不一样，整体思路参考参见更新版的`说明.md`
+
 ## 文件结构
 
 ```
@@ -166,7 +168,7 @@ def train_model_with_tscv(X_train, y_train, model_type='rf', n_splits=10)
 def select_stocks_and_backtest(model, X_test, hold_data, return_col, imputer, stock_ids, top_k=15, test_start=None, hold_end=None)
 ```
 
-1. 使用训练好的模型，在`test`集上预测出收益为最高类别的概率，记为`score`，每只股票、每天生成一个预测分数，对每只股票在所有日期上的分数进行平均，按平均后的分数从高到低选择`topK=15`支股票
+1. 使用训练好的模型，在`test`日上预测出收益为最高类别的概率，记为`score`，按分数从高到低选择`topK=15`支股票
 2. 查找这些股票在`hold`集上的收益率，取平均（因为假设平均持仓）；检查有效股票数量
 3. 返回收益率平均、模型的特征重要性
 
@@ -215,10 +217,11 @@ random seed ： 会有影响，当前固定的29（可以修改`random_seed`变�
 
 1. 累计收益
    
+
 呈现：累计收益（折线图）；与中证500指数对比（折线图）
-   
+
    数据：股票购买日 - 股票组合`fwd_6m_return`  - 中证500 `fwd_6m_return`【？】
-   
+
 2. 每个阶段的收益
 
    呈现：（条形图）与中证500对比（折线图）

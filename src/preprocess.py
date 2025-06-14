@@ -15,7 +15,7 @@ def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表 暂�
     处理 merge_final.parquet：
     1. 生成“有成分股变动”的调仓日列表，输出 zz500_list.csv，
        并额外给出每期相对上一期的新增(add)和剔除(minus)成分股。
-    2. 基于该列表做 9 期滑动窗口交集，输出 zz500_list_filter.csv。
+    2. 基于该列表做 9 期滑动窗口并集，输出 zz500_list_filter.csv。
     """
     # ======== 常量定义 ========
     file_path = "./data/905_daily_fill.csv"
@@ -80,7 +80,9 @@ def daily_data_2_stock_list(): # 从日度数据生成成分股股票列表 暂�
     # -------- 5. 基于“有变动”列表做 9 期滑动窗口并集 --------
     records = []
 
-    for i in range(len(cl) - 9): # 丢弃最后一期！！
+    r = len(cl) - 9  # 丢弃最后一期！！！！
+    # r = len(cl) - 8  # 不丢弃最后一期（获取最新）
+    for i in range(r):
         window = cl.iloc[i: i + 9]
         common = set(window.iloc[0]["code"])
         for codes in window["code"].iloc[1:]:

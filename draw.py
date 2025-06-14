@@ -186,6 +186,90 @@ def plot_cumulative_return(df, TOP_K=7):
     # plt.show()
 
 
+def plot_multi_model_returns(timestamps, models, TOP_K: int = 7):
+    """
+    读取多个模型的回测结果 CSV 文件，并将它们的累计收益与市场基准一起绘制在一张图上。
+
+    参数：
+    - timestamp: str，时间戳，例如 '20250604'
+    - model_types: list，模型类型列表，例如 ['DecisionTree', 'RandomForest', 'XGBoost']
+    - TOP_K: int，选择第几名组合（默认第7，即 index=6）
+    """
+
+    plt.figure(figsize=(14, 6))
+    market_y = None
+    x_labels = None
+    valid_models = []
+
+    for i in range(len(timestamps)):
+        file_path = f'./result/top_k_stocks_{models[i]}_{timestamps[i]}.csv'
+        df = pd.read_csv(file_path, parse_dates=['hold_start', 'hold_end'])
+        if 'Unnamed: 0' in df.columns:  # 修复 index 列名（如果有）
+            df.rename(columns={'Unnamed: 0': 'index'}, inplace=True)
+        k = TOP_K - 1
+        df_k = df[df['index'] == k].copy().sort_values(by='hold_start')
+
+        df_k['cum_return'] = (1 + df_k['true_ret_avg']).cumprod()
+        df_k['market_cum_return'] = (1 + df_k['905_true_ret']).cumprod()
+        period_labels = df_k['hold_start'].dt.strftime('%y-%m') + ' -> ' + df_k['hold_end'].dt.strftime('%y-%m')
+        if market_y is None:
+            market_y = df_k['market_cum_return']
+            x_labels = period_labels
+        plt.plot(period_labels, df_k['cum_return'], label=f'{models[i]}', marker='o')
+
+    # 绘制市场基准线
+    if market_y is not None:
+        plt.plot(x_labels, market_y, label='Market Cumulative Return (905)', linestyle='--', marker='s', color='gray')
+
+    plt.xlabel('Period')
+    plt.ylabel('Cumulative Return')
+    plt.title(f'Cumulative Return Comparison (TOP_K={TOP_K})')
+    plt.legend()
+    plt.grid(True)
+    plt.xticks(rotation=90)
+    plt.tight_layout()
+
+    save_path = f'./result/fig/multi_model_cumulative_return_top{TOP_K}.png'
+    plt.savefig(save_path)
+    print(f"✅ 图像已保存：{save_path}")
+    plt.show()
+
+def plot_multi_model_accs(timestamps, models, TOP_K: int = 7):
+    """
+    读取多个模型的回测结果 CSV 文件，并将它们的累计收益与市场基准一起绘制在一张图上。
+
+    参数：
+    - timestamp: str，时间戳，例如 '20250604'
+    - model_types: list，模型类型列表，例如 ['DecisionTree', 'RandomForest', 'XGBoost']
+    - TOP_K: int，选择第几名组合（默认第7，即 index=6）
+    """
+
+    plt.figure(figsize=(14, 6))
+
+    for i in range(len(timestamps)):
+        file_path = f'./result/label_accuracy_{models[i]}_{timestamps[i]}.csv'
+        df = pd.read_csv(file_path, parse_dates=['date'])
+        df.sort_values(by='date', inplace=True)
+        if 'Unnamed: 0' in df.columns:  # 修复 index 列名（如果有）
+            df.rename(columns={'Unnamed: 0': 'index'}, inplace=True)
+        period_labels = df['date'].dt.strftime('%y-%m')
+        plt.plot(period_labels, df['accuracy'], label=f'{models[i]}', marker='o')
+
+    plt.xlabel('Period')
+    plt.ylabel('Cumulative Return')
+    plt.title(f'Cumulative Return Comparison (TOP_K={TOP_K})')
+    plt.legend()
+    plt.grid(True)
+    plt.xticks(rotation=90)
+    plt.tight_layout()
+
+    save_path = f'./result/fig/multi_model_acc_top{TOP_K}.png'
+    plt.savefig(save_path)
+    print(f"✅ 图像已保存：{save_path}")
+    plt.show()
+
+
+
 def label_acc():
     # 读取CSV文件
     # df = pd.read_csv(f'./result/label_accuracy_{MODEL_TYPE}_{TIME_STAMP}.csv', parse_dates=['date'])
@@ -516,6 +600,47 @@ def compare_top_k_avg(df, top_index = 5):
     plt.show()
 
 
+def plot_top_k_final_cum_return(df, max_top_k=50):
+    ts = TIME_STAMP
+
+    df = df.sort_values(by='hold_start')
+
+    # 存储每个 top_k 对应的最终累计收益
+    top_k_results = []
+
+    for k in range(1, max_top_k + 1):
+        # 提取对应 top_k 的所有 index
+        top_k_df = df[df['index'] == k-1].copy()
+        top_k_df['true_ret_avg'] = pd.to_numeric(top_k_df['true_ret_avg'], errors='coerce')
+        top_k_df = top_k_df.sort_values(by='hold_start')
+
+        # 计算累计收益（整体组合平均收益）
+        if not top_k_df.empty:
+            grouped = top_k_df.groupby('hold_start')['true_ret_avg'].mean().sort_index()
+            cumulative_return = (1 + grouped).cumprod()
+            final_cum_ret = cumulative_return.iloc[-1]
+        else:
+            final_cum_ret = float('nan')
+
+        top_k_results.append((k, final_cum_ret))
+
+    # 转换为 DataFrame 方便绘图
+    result_df = pd.DataFrame(top_k_results, columns=['top_k', 'final_cumulative_return'])
+
+    # 开始绘图
+    plt.figure(figsize=(10, 6))
+    plt.plot(result_df['top_k'], result_df['final_cumulative_return'], marker='o')
+    plt.title(f'Final Cumulative Return vs Top-K - {MODEL_TYPE}')
+    plt.xlabel('Top K')
+    plt.ylabel('Final Cumulative Return')
+    plt.grid(True)
+    plt.tight_layout()
+
+    # 保存图像
+    plt.savefig(f'./result/final_cum_return_vs_topk_{MODEL_TYPE}_{ts}.png', dpi=300)
+    plt.show()
+
+
 def compute_index_performance(index_price_path='data/905_price.csv',
                                top_k_df=None,
                                TOP_K=1,
@@ -616,6 +741,9 @@ def compute_index_performance(index_price_path='data/905_price.csv',
 
 
 
+
+
+
 def draw_all(model_type: str, time_stamp: str, top_k: int):
     os.makedirs('./result/fig', exist_ok=True)
     global MODEL_TYPE, TIME_STAMP
@@ -638,11 +766,8 @@ def draw_all(model_type: str, time_stamp: str, top_k: int):
     compare_top_k_cum(df)
     compare_top_k_avg(df)
     compute_index_performance(top_k_df=df)
+    plot_top_k_final_cum_return(df=df, max_top_k=50)
     print("finish draw all")
-
-
-
-
 
 
 
@@ -657,7 +782,11 @@ if __name__ == '__main__':
     TIME_STAMP = '20250604_165947'
     MODEL_TYPE = 'xgb'
     TIME_STAMP = '20250604_193709'
-    draw_all(model_type=MODEL_TYPE, time_stamp=TIME_STAMP, top_k=7)
+    MODEL_TYPE = 'xgb'
+    TIME_STAMP = '20250604_202457'
+    draw_all(model_type=MODEL_TYPE, time_stamp=TIME_STAMP, top_k=50)
+    # plot_multi_model_returns(['20250604_165947','20250604_185617','20250604_193709'], ['dt','rf','xgb'])
+    # plot_multi_model_accs(['20250604_165947', '20250604_185617', '20250604_193709'], ['dt', 'rf', 'xgb'])
     # backtest_results()
     # compare_top_k_cum()
     # compare_top_k_avg()

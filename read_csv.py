@@ -95,9 +95,9 @@ field_name = '证券代码'
 value = ('600161')
 
 input_dir = os.path.join('./data/processed/merge_data_ret.parquet')
-output_csv = os.path.join('./data/read_csv/read_label_0.csv')
-field_name = 'label'
-value = ('0')
+output_csv = os.path.join('./data/read_csv/read_csv.csv')
+field_name = 'code'
+value = ('000009')
 
 
 

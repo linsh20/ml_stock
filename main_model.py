@@ -30,11 +30,11 @@ from sklearn.preprocessing import LabelEncoder
 def parse_args():
     # 解析参数
     parser = argparse.ArgumentParser(description="Run time series model.")
-    parser.add_argument('--model_type', type=str, default='dt', choices=['dt', 'rf', 'xgb'],
+    parser.add_argument('--model_type', type=str, default='xgb', choices=['dt', 'rf', 'xgb'],
                         help="Type of model to use: 'dt' (Decision Tree), 'rf' (Random Forest), 'xgb' (XGBoost)")
     parser.add_argument('--test', action='store_true', help="Whether to run in test mode")
-    parser.add_argument('--n_jobs', type=int, default=8,
-                        help="Number of parallel jobs to run. -1 means using all processors.")
+    parser.add_argument('--n_jobs', type=int, default=1,
+                        help="Number of parallel jobs to run. -1 means using all processors. 1 means not parrallel.")
     parser.add_argument('--top_k', type=int, default=15,
                         help="Number of top stocks to select based on predicted scores.")
     parser.add_argument('--k_fold', type=int, default=5,

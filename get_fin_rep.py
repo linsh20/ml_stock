@@ -52,9 +52,9 @@ def get_from_list():
 
 if __name__ == '__main__':
     # get_from_list()
-    df = ak.stock_financial_report_sina(stock="sh601012", symbol="现金流量表")
-    df.to_excel("./data/601012/现金流量表.xlsx", index=False,)
-    df = ak.stock_financial_report_sina(stock="sh601012", symbol="资产负债表")
-    df.to_excel("./data/601012/资产负债表.xlsx", index=False)
-    df = ak.stock_financial_report_sina(stock="sh601012", symbol="利润表")
-    df.to_excel("./data/601012/利润表.xlsx", index=False)
+    df = ak.stock_financial_report_sina(stock="002043", symbol="现金流量表")
+    df.to_excel("./data/002043_现金流量表.xlsx", index=False,)
+    df = ak.stock_financial_report_sina(stock="002043", symbol="资产负债表")
+    df.to_excel("./data/002043_资产负债表.xlsx", index=False)
+    df = ak.stock_financial_report_sina(stock="002043", symbol="利润表")
+    df.to_excel("./data/002043_利润表.xlsx", index=False)
